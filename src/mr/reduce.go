@@ -15,18 +15,16 @@ func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 func reduceWorker(args RequestMapTask, reply TaskReply, reducef func(string, []string) string) {
-	file, err := os.Open(reply.File)
-	if err != nil {
-		log.Fatalf("reduceWorker %v cannot open %v", reply.reduceReply.WorkerId, reply.File)
-		return
-	}
-
-	kva := jsonFromFile(file)
+	kva := jsonFromFile(reply.File)
 	sort.Sort(ByKey(kva))
-	reduce("mr-out-"+reply.reduceReply.WorkerId, kva, reducef)
+	reduce("mr-out-"+reply.ReduceReply.WorkerId, kva, reducef)
 }
 
-func jsonFromFile(f *os.File) []KeyValue {
+func jsonFromFile(filename string) []KeyValue {
+	f, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
 	dec := json.NewDecoder(f)
 	kva := make([]KeyValue, 0, 0)
 	for {
@@ -40,6 +38,12 @@ func jsonFromFile(f *os.File) []KeyValue {
 }
 
 func reduce(ofile string, kva []KeyValue, reducef func(string, []string) string) {
+	file, err := os.Create(ofile)
+	if err != nil {
+		log.Fatalf("writeOutputFile os.Create failed")
+		return
+	}
+
 	i := 0
 	for i < len(kva) {
 		j := i + 1
@@ -53,19 +57,10 @@ func reduce(ofile string, kva []KeyValue, reducef func(string, []string) string)
 		output := reducef(kva[i].Key, values)
 
 		// this is the correct format for each line of Reduce output.
-		writeOutputFile(ofile, output, kva[i])
+		if _, err := fmt.Fprintf(file, "%v %v\n", kva[i].Key, output); err != nil {
+			log.Fatalf("writeOutputFile Fprintf failed")
+		}
 
 		i = j
-	}
-}
-
-func writeOutputFile(ofile, output string, kva KeyValue) {
-	file, err := os.Create(ofile)
-	if err != nil {
-		log.Fatalf("writeOutputFile os.Create failed")
-		return
-	}
-	if _, err := fmt.Fprintf(file, "%v %v\n", kva.Key, output); err != nil {
-		log.Fatalf("writeOutputFile Fprintf failed")
 	}
 }

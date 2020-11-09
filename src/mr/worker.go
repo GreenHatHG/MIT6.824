@@ -35,11 +35,10 @@ func Worker(mapf func(string, string) []KeyValue,
 	args := RequestMapTask{WorkerId: getMapWorkerInstance().WorkerId}
 	reply := TaskReply{}
 	call("Master.AssignTask", &args, &reply)
+	fmt.Printf("%+v\n", reply)
 	if reply.IsDone {
 		return
 	}
-	fmt.Printf("%+v\n", args)
-	fmt.Printf("%+v\n", reply)
 
 	if reply.WorkerType == "m" {
 		intermediateFile := mapWorker(args, reply, mapf)

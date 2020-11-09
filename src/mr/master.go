@@ -1,7 +1,7 @@
 package mr
 
 import (
-	"fmt"
+	"errors"
 	"log"
 	"strings"
 	"sync"
@@ -20,54 +20,40 @@ type Master struct {
 }
 
 // Your code here -- RPC handlers for the worker to call.
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-//func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
-//	reply.Y = args.X + 1
-//	return nil
-//}
-
 var intermediateFileLock, taskLock sync.Mutex
 
 func (m *Master) AssignTask(args *RequestMapTask, reply *TaskReply) error {
 	taskLock.Lock()
+
 	if len(m.InputFiles) > 0 {
-		m.startMapTask(args, reply)
+		m.startMapTask(reply)
 	} else if len(m.IntermediateFiles) > 0 {
-		m.startReduceTask(args, reply)
+		m.startReduceTask(reply)
+	} else {
+		m.isDone(reply)
 	}
 
-	fmt.Println("len(m.InputFiles)", len(m.InputFiles))
-	fmt.Println("len(m.IntermediateFiles)", len(m.IntermediateFiles))
-
-	m.isDone(args, reply)
-	taskLock.Unlock()
+	defer taskLock.Unlock()
 	return nil
 }
 
-func (m *Master) startMapTask(args *RequestMapTask, reply *TaskReply) {
+func (m *Master) startMapTask(reply *TaskReply) {
 	reply.File = m.InputFiles[0]
 	reply.WorkerType = "m"
 	reply.MapReply.NReduce = m.NReduce
 	m.InputFiles = m.InputFiles[1:]
-	fmt.Println("len(m.InputFiles)", len(m.InputFiles[1:]))
-	fmt.Println("len(m.InputFiles)", len(m.InputFiles))
 }
 
-func (m *Master) startReduceTask(args *RequestMapTask, reply *TaskReply) {
+func (m *Master) startReduceTask(reply *TaskReply) {
 	reply.File = m.IntermediateFiles[0]
-	if workerId := getReduceWorkerId(reply.File); workerId != "" {
+	if workerId, err := getReduceWorkerId(reply.File); err == nil {
 		reply.WorkerType = "r"
-		reply.reduceReply.WorkerId = workerId
+		reply.ReduceReply.WorkerId = workerId
 	}
 	m.IntermediateFiles = m.IntermediateFiles[1:]
 }
 
-func (m *Master) isDone(args *RequestMapTask, reply *TaskReply) {
+func (m *Master) isDone(reply *TaskReply) {
 	//tg:all worker done
 	if len(m.InputFiles) == 0 && len(m.IntermediateFiles) == 0 {
 		reply.IsDone = true
@@ -77,18 +63,18 @@ func (m *Master) isDone(args *RequestMapTask, reply *TaskReply) {
 
 func (m *Master) AddIntermediateFile(args *MapFinish, reply *TaskReply) error {
 	intermediateFileLock.Lock()
-	m.InputFiles = append(m.InputFiles, args.IntermediateFile)
-	intermediateFileLock.Unlock()
+	m.IntermediateFiles = append(m.IntermediateFiles, args.IntermediateFile)
+	defer intermediateFileLock.Unlock()
 	return nil
 }
 
-func getReduceWorkerId(intermediateFile string) string {
+func getReduceWorkerId(intermediateFile string) (string, error) {
 	//"mr-X-Y"
 	arr := strings.Split(intermediateFile, "-")
-	if len(arr) == 3 {
-		return arr[2]
+	if len(arr) == 3 && arr[2] != "" {
+		return arr[2], nil
 	}
-	return ""
+	return "", errors.New(`reduceWorkerId is ""`)
 }
 
 //

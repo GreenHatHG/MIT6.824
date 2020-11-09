@@ -46,7 +46,7 @@ type TaskReply struct {
 	WorkerType  string
 	File        string
 	MapReply    MapReply
-	reduceReply ReduceReply
+	ReduceReply ReduceReply
 	IsDone      bool
 }
 
