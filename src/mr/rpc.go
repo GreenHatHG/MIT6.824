@@ -23,13 +23,26 @@ import "strconv"
 //}
 
 // Add your RPC definitions here.
-type WorkerArgs struct {
+type MapArgs struct {
 	WorkerId int
 }
 
-type TaskReply struct {
-	File string
+type MapReply struct {
 	NReduce int
+}
+
+type ReduceReply struct {
+	//master指定ReduceWorkerId
+	//因为Map生成中间文件时已经带上ReduceWorkerId
+	WorkerId string
+}
+
+type TaskReply struct {
+	//"m" or "r"
+	WorkerType  string
+	File        string
+	MapReply    MapReply
+	reduceReply ReduceReply
 }
 
 // Cook up a unique-ish UNIX-domain socket name

@@ -8,11 +8,10 @@ import "os"
 import "net/rpc"
 import "net/http"
 
-
 type Master struct {
 	// Your definitions here.
 	InputFiles []string
-	NReduce int
+	NReduce    int
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -27,14 +26,15 @@ type Master struct {
 //	return nil
 //}
 
-func (m *Master) AssignTask(args *WorkerArgs, reply *TaskReply) error {
-	if len(m.InputFiles) > 0{
+func (m *Master) AssignTask(args *MapArgs, reply *TaskReply) error {
+	if len(m.InputFiles) > 0 {
 		reply.File = m.InputFiles[0]
 		reply.NReduce = m.NReduce
 		m.InputFiles = m.InputFiles[1:]
 	}
 	return nil
 }
+
 //
 // start a thread that listens for RPCs from worker.go
 //
@@ -60,7 +60,6 @@ func (m *Master) Done() bool {
 
 	// Your code here.
 
-
 	return ret
 }
 
@@ -75,7 +74,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	// Your code here.
 	m.InputFiles = files
 	m.NReduce = nReduce
-	
+
 	m.server()
 	return &m
 }
