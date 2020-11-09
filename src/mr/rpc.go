@@ -23,8 +23,12 @@ import "strconv"
 //}
 
 // Add your RPC definitions here.
-type MapArgs struct {
+type RequestMapTask struct {
 	WorkerId int
+}
+
+type MapFinish struct {
+	IntermediateFile string
 }
 
 type MapReply struct {
@@ -43,6 +47,7 @@ type TaskReply struct {
 	File        string
 	MapReply    MapReply
 	reduceReply ReduceReply
+	IsDone      bool
 }
 
 // Cook up a unique-ish UNIX-domain socket name

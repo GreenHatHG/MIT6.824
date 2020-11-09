@@ -32,15 +32,22 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-	args := MapArgs{WorkerId: getMapWorkerInstance().WorkerId}
+	args := RequestMapTask{WorkerId: getMapWorkerInstance().WorkerId}
 	reply := TaskReply{}
 	call("Master.AssignTask", &args, &reply)
-	fmt.Println(args.WorkerId, reply.File)
+	if reply.IsDone {
+		return
+	}
+	fmt.Printf("%+v\n", args)
+	fmt.Printf("%+v\n", reply)
 
 	if reply.WorkerType == "m" {
-		mapWorker(args, reply, mapf)
+		intermediateFile := mapWorker(args, reply, mapf)
+		call("Master.AddIntermediateFile", &MapFinish{IntermediateFile: intermediateFile}, &TaskReply{})
+	} else if reply.WorkerType == "r" {
+		reduceWorker(args, reply, reducef)
 	}
-
+	Worker(mapf, reducef)
 }
 
 //

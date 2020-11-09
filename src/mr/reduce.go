@@ -14,7 +14,7 @@ func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
-func reduceWorker(args MapArgs, reply TaskReply, reducef func(string, []string) string) {
+func reduceWorker(args RequestMapTask, reply TaskReply, reducef func(string, []string) string) {
 	file, err := os.Open(reply.File)
 	if err != nil {
 		log.Fatalf("reduceWorker %v cannot open %v", reply.reduceReply.WorkerId, reply.File)
@@ -23,7 +23,7 @@ func reduceWorker(args MapArgs, reply TaskReply, reducef func(string, []string) 
 
 	kva := jsonFromFile(file)
 	sort.Sort(ByKey(kva))
-
+	reduce("mr-out-"+reply.reduceReply.WorkerId, kva, reducef)
 }
 
 func jsonFromFile(f *os.File) []KeyValue {

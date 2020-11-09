@@ -26,14 +26,14 @@ func getMapWorkerInstance() MapWorkerInstance {
 	return instance
 }
 
-func mapWorker(args MapArgs, reply TaskReply, mapf func(string, string) []KeyValue) {
+func mapWorker(args RequestMapTask, reply TaskReply, mapf func(string, string) []KeyValue) string {
 	content, err := readFile(reply.File)
 	if err != nil {
 		log.Fatalf("worker %v cannot open %v", args.WorkerId, reply.File)
-		return
+		return ""
 	}
 	kva := mapf(reply.File, content)
-	writeIntermediateFile(args.WorkerId, reply.MapReply.NReduce, reply.File, kva)
+	return writeIntermediateFile(args.WorkerId, reply.MapReply.NReduce, reply.File, kva)
 }
 
 func readFile(filename string) (string, error) {
@@ -51,12 +51,12 @@ func readFile(filename string) (string, error) {
 	return string(content), err
 }
 
-func writeIntermediateFile(workerId, nReduce int, filename string, kva []KeyValue) {
+func writeIntermediateFile(workerId, nReduce int, filename string, kva []KeyValue) string {
 	intermediateFile := fmt.Sprint("mr-", workerId, "-", ihash(filename)%nReduce)
 	file, err := ioutil.TempFile(".", intermediateFile)
 	if err != nil {
 		log.Fatalf("worker %v cannot create file %v", workerId, intermediateFile)
-		return
+		return ""
 	}
 
 	enc := json.NewEncoder(file)
@@ -69,4 +69,5 @@ func writeIntermediateFile(workerId, nReduce int, filename string, kva []KeyValu
 	if err := os.Rename(file.Name(), intermediateFile); err != nil {
 		log.Fatalf("worker %v cannot Rename tempFile", workerId)
 	}
+	return intermediateFile
 }
