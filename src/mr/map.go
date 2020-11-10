@@ -26,14 +26,14 @@ func getMapWorkerInstance() MapWorkerInstance {
 	return instance
 }
 
-func mapWorker(args RequestMapTask, reply TaskReply, mapf func(string, string) []KeyValue) string {
-	content, err := readFile(reply.File)
+func mapWorker(args RequestMapTask, reply TaskReply, mapf func(string, string) []KeyValue) []string {
+	content, err := readFile(reply.MapReply.File)
 	if err != nil {
-		log.Fatalf("worker %v cannot open %v", args.WorkerId, reply.File)
-		return ""
+		log.Fatalf("worker %v cannot open %v", args.WorkerId, reply.MapReply.File)
+		return []string{}
 	}
-	kva := mapf(reply.File, content)
-	return writeIntermediateFile(args.WorkerId, reply.MapReply.NReduce, reply.File, kva)
+	kva := mapf(reply.MapReply.File, content)
+	return writeIntermediateFile(args, reply, kva)
 }
 
 func readFile(filename string) (string, error) {
@@ -51,23 +51,36 @@ func readFile(filename string) (string, error) {
 	return string(content), err
 }
 
-func writeIntermediateFile(workerId, nReduce int, filename string, kva []KeyValue) string {
-	intermediateFile := fmt.Sprint("mr-", workerId, "-", ihash(filename)%nReduce)
-	file, err := ioutil.TempFile(".", intermediateFile)
-	if err != nil {
-		log.Fatalf("worker %v cannot create file %v", workerId, intermediateFile)
-		return ""
+func writeIntermediateFile(args RequestMapTask, reply TaskReply, kva []KeyValue) []string {
+	shufflingData := make(map[int][]KeyValue)
+	for _, kv := range kva {
+		reduceWorkerId := ihash(kv.Key) % reply.MapReply.NReduce
+		shufflingData[reduceWorkerId] = append(shufflingData[reduceWorkerId], kv)
 	}
 
+	intermediateFiles := make([]string, 0, 0)
+	for index, kva := range shufflingData {
+		intermediateFile := fmt.Sprint("mr-", args.WorkerId, "-", index)
+		intermediateFiles = append(intermediateFiles, intermediateFile)
+		tempFileAndRename(intermediateFile, kva)
+	}
+	return intermediateFiles
+}
+
+func tempFileAndRename(intermediateFile string, kva []KeyValue) {
+	file, err := ioutil.TempFile(".", intermediateFile)
+	if err != nil {
+		log.Fatalf("cannot create file")
+		return
+	}
 	enc := json.NewEncoder(file)
 	for _, kv := range kva {
 		if err := enc.Encode(&kv); err != nil {
-			log.Fatalf("worker %v cannot Encode %v", workerId, kv)
+			log.Fatalf("cannot Encode")
 		}
 	}
 
 	if err := os.Rename(file.Name(), intermediateFile); err != nil {
-		log.Fatalf("worker %v cannot Rename tempFile", workerId)
+		log.Fatalf("cannot Rename tempFile")
 	}
-	return intermediateFile
 }

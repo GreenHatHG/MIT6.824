@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"container/list"
 	"errors"
 	"log"
 	"strings"
@@ -15,7 +16,7 @@ type Master struct {
 	// Your definitions here.
 	InputFiles        []string
 	NReduce           int
-	IntermediateFiles []string
+	IntermediateFiles *list.List
 	IsDone            bool
 }
 
@@ -27,7 +28,7 @@ func (m *Master) AssignTask(args *RequestMapTask, reply *TaskReply) error {
 
 	if len(m.InputFiles) > 0 {
 		m.startMapTask(reply)
-	} else if len(m.IntermediateFiles) > 0 {
+	} else if m.IntermediateFiles.Len() > 0 {
 		m.startReduceTask(reply)
 	} else {
 		m.isDone(reply)
@@ -38,24 +39,41 @@ func (m *Master) AssignTask(args *RequestMapTask, reply *TaskReply) error {
 }
 
 func (m *Master) startMapTask(reply *TaskReply) {
-	reply.File = m.InputFiles[0]
+	reply.MapReply.File = m.InputFiles[0]
 	reply.WorkerType = "m"
 	reply.MapReply.NReduce = m.NReduce
 	m.InputFiles = m.InputFiles[1:]
 }
 
 func (m *Master) startReduceTask(reply *TaskReply) {
-	reply.File = m.IntermediateFiles[0]
-	if workerId, err := getReduceWorkerId(reply.File); err == nil {
-		reply.WorkerType = "r"
-		reply.ReduceReply.WorkerId = workerId
+	//获取一个reduceWorkId
+	index, err := getReduceWorkerId(m.IntermediateFiles.Front().Value.(string))
+	if err != nil {
+		m.IntermediateFiles.Remove(m.IntermediateFiles.Front())
+		return
 	}
-	m.IntermediateFiles = m.IntermediateFiles[1:]
+
+	files := make([]string, 0, 0)
+	//找出所有与index相同的file
+	for e := m.IntermediateFiles.Front(); e != nil; e = e.Next() {
+		if i, err := getReduceWorkerId(e.Value.(string)); err != nil {
+			m.IntermediateFiles.Remove(e)
+		} else if i == index {
+			files = append(files, e.Value.(string))
+			m.IntermediateFiles.Remove(e)
+		}
+	}
+
+	if len(files) > 0 {
+		reply.WorkerType = "r"
+		reply.ReduceReply.WorkerId = index
+		reply.ReduceReply.Files = files
+	}
 }
 
 func (m *Master) isDone(reply *TaskReply) {
 	//tg:all worker done
-	if len(m.InputFiles) == 0 && len(m.IntermediateFiles) == 0 {
+	if len(m.InputFiles) == 0 && m.IntermediateFiles.Len() == 0 {
 		reply.IsDone = true
 		m.IsDone = true
 	}
@@ -63,7 +81,9 @@ func (m *Master) isDone(reply *TaskReply) {
 
 func (m *Master) AddIntermediateFile(args *MapFinish, reply *TaskReply) error {
 	intermediateFileLock.Lock()
-	m.IntermediateFiles = append(m.IntermediateFiles, args.IntermediateFile)
+	for _, file := range args.IntermediateFiles {
+		m.IntermediateFiles.PushBack(file)
+	}
 	defer intermediateFileLock.Unlock()
 	return nil
 }
@@ -113,7 +133,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	// Your code here.
 	m.InputFiles = files
 	m.NReduce = nReduce
-	m.IntermediateFiles = make([]string, 0, 0)
+	m.IntermediateFiles = list.New()
 	m.IsDone = false
 
 	m.server()

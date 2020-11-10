@@ -9,42 +9,30 @@ package mr
 import "os"
 import "strconv"
 
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
-
-//type ExampleArgs struct {
-//	X int
-//}
-//
-//type ExampleReply struct {
-//	Y int
-//}
-
 // Add your RPC definitions here.
 type RequestMapTask struct {
 	WorkerId int
 }
 
 type MapFinish struct {
-	IntermediateFile string
+	IntermediateFiles []string
 }
 
 type MapReply struct {
 	NReduce int
+	File    string
 }
 
 type ReduceReply struct {
 	//master指定ReduceWorkerId
 	//因为Map生成中间文件时已经带上ReduceWorkerId
 	WorkerId string
+	Files    []string
 }
 
 type TaskReply struct {
 	//"m" or "r"
 	WorkerType  string
-	File        string
 	MapReply    MapReply
 	ReduceReply ReduceReply
 	IsDone      bool

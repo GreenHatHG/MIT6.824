@@ -15,7 +15,10 @@ func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 func reduceWorker(args RequestMapTask, reply TaskReply, reducef func(string, []string) string) {
-	kva := jsonFromFile(reply.File)
+	kva := make([]KeyValue, 0, 0)
+	for _, file := range reply.ReduceReply.Files {
+		kva = append(kva, jsonFromFile(file)...)
+	}
 	sort.Sort(ByKey(kva))
 	reduce("mr-out-"+reply.ReduceReply.WorkerId, kva, reducef)
 }

@@ -41,8 +41,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	}
 
 	if reply.WorkerType == "m" {
-		intermediateFile := mapWorker(args, reply, mapf)
-		call("Master.AddIntermediateFile", &MapFinish{IntermediateFile: intermediateFile}, &TaskReply{})
+		intermediateFiles := mapWorker(args, reply, mapf)
+		call("Master.AddIntermediateFile", &MapFinish{IntermediateFiles: intermediateFiles}, &TaskReply{})
 	} else if reply.WorkerType == "r" {
 		reduceWorker(args, reply, reducef)
 	}
