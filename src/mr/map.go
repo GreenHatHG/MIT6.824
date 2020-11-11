@@ -5,25 +5,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"math/rand"
 	"os"
-	"sync"
-	"time"
 )
 
 type MapWorkerInstance struct {
 	WorkerId int
-}
-
-var instance MapWorkerInstance
-var once sync.Once
-
-func getMapWorkerInstance() MapWorkerInstance {
-	once.Do(func() {
-		rand.Seed(time.Now().UnixNano())
-		instance = MapWorkerInstance{WorkerId: rand.Intn(100000)}
-	})
-	return instance
 }
 
 func mapWorker(args RequestMapTask, reply TaskReply, mapf func(string, string) []KeyValue) []string {

@@ -14,7 +14,12 @@ type RequestMapTask struct {
 	WorkerId int
 }
 
+type ReduceFinish struct {
+	WorkerId string
+}
+
 type MapFinish struct {
+	File              string
 	IntermediateFiles []string
 }
 

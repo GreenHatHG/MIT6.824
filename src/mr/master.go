@@ -1,90 +1,155 @@
 package mr
 
 import (
-	"container/list"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
+	"time"
 )
 import "net"
 import "os"
 import "net/rpc"
 import "net/http"
 
+type Task struct {
+	StartTime time.Time
+	File      string
+	//"m" or "r"
+	Type string
+}
+
 type Master struct {
 	// Your definitions here.
-	InputFiles        []string
+	InputFiles        *SafeList
 	NReduce           int
-	IntermediateFiles *list.List
+	IntermediateFiles *SafeList
 	IsDone            bool
+	TaskList          *SafeList
 }
 
 // Your code here -- RPC handlers for the worker to call.
-var intermediateFileLock, taskLock sync.Mutex
+var assignTaskLock sync.Mutex
+var wg sync.WaitGroup
 
 func (m *Master) AssignTask(args *RequestMapTask, reply *TaskReply) error {
-	taskLock.Lock()
+	assignTaskLock.Lock()
 
-	if len(m.InputFiles) > 0 {
+	if m.InputFiles.Len() > 0 {
+		wg.Add(1)
 		m.startMapTask(reply)
 	} else if m.IntermediateFiles.Len() > 0 {
-		m.startReduceTask(reply)
+		wg.Wait()
+		if m.InputFiles.Len() == 0 {
+			m.startReduceTask(reply)
+		}
 	} else {
 		m.isDone(reply)
 	}
 
-	defer taskLock.Unlock()
+	assignTaskLock.Unlock()
 	return nil
 }
 
+func (m *Master) checkCrash() {
+	m.TaskList.MU.Lock()
+	log.Println("checkcrash")
+	for e := m.TaskList.Data.Front(); e != nil; {
+		if time.Now().Sub(e.Value.(Task).StartTime).Seconds() > 10.0 {
+			fmt.Println("checkcrash", e.Value.(Task))
+			if e.Value.(Task).Type == "m" {
+				wg.Done()
+				m.InputFiles.MU.Lock()
+				m.InputFiles.Add(e.Value.(Task).File)
+				m.InputFiles.MU.Unlock()
+			} else {
+				m.IntermediateFiles.MU.Lock()
+				m.IntermediateFiles.Add(e.Value.(Task).File)
+				m.IntermediateFiles.MU.Unlock()
+			}
+			next := e.Next()
+			m.TaskList.Remove(e.Value)
+			e = next
+		} else {
+			e = e.Next()
+		}
+	}
+	log.Println("checkcrash finish")
+	m.TaskList.MU.Unlock()
+}
+
 func (m *Master) startMapTask(reply *TaskReply) {
-	reply.MapReply.File = m.InputFiles[0]
+	reply.MapReply.File = m.InputFiles.Data.Front().Value.(string)
+	m.TaskList.Add(Task{
+		StartTime: time.Now(),
+		File:      reply.MapReply.File,
+		Type:      "m",
+	})
 	reply.WorkerType = "m"
 	reply.MapReply.NReduce = m.NReduce
-	m.InputFiles = m.InputFiles[1:]
+	m.InputFiles.Remove(m.InputFiles.Data.Front().Value)
 }
 
 func (m *Master) startReduceTask(reply *TaskReply) {
+	m.IntermediateFiles.MU.Lock()
 	//获取一个reduceWorkId
-	index, err := getReduceWorkerId(m.IntermediateFiles.Front().Value.(string))
+	index, err := getReduceWorkerId(m.IntermediateFiles.Data.Front().Value.(string))
 	if err != nil {
-		m.IntermediateFiles.Remove(m.IntermediateFiles.Front())
+		m.IntermediateFiles.Remove(m.IntermediateFiles.Data.Front().Value)
 		return
 	}
 
 	files := make([]string, 0, 0)
 	//找出所有与index相同的file
-	for e := m.IntermediateFiles.Front(); e != nil; e = e.Next() {
-		if i, err := getReduceWorkerId(e.Value.(string)); err != nil {
-			m.IntermediateFiles.Remove(e)
+	for e := m.IntermediateFiles.Data.Front(); e != nil; {
+		i, err := getReduceWorkerId(e.Value.(string))
+		if err != nil {
+			next := e.Next()
+			m.IntermediateFiles.Remove(e.Value)
+			e = next
 		} else if i == index {
+			next := e.Next()
 			files = append(files, e.Value.(string))
-			m.IntermediateFiles.Remove(e)
+			m.IntermediateFiles.Remove(e.Value)
+			e = next
+		} else {
+			e = e.Next()
 		}
 	}
 
 	if len(files) > 0 {
+		m.TaskList.Add(Task{
+			StartTime: time.Now(),
+			//workerId
+			File: index,
+			Type: "r",
+		})
 		reply.WorkerType = "r"
 		reply.ReduceReply.WorkerId = index
 		reply.ReduceReply.Files = files
 	}
+	m.IntermediateFiles.MU.Unlock()
 }
 
 func (m *Master) isDone(reply *TaskReply) {
-	//tg:all worker done
-	if len(m.InputFiles) == 0 && m.IntermediateFiles.Len() == 0 {
+	if m.InputFiles.Len() == 0 && m.IntermediateFiles.Len() == 0 {
 		reply.IsDone = true
 		m.IsDone = true
 	}
 }
 
 func (m *Master) AddIntermediateFile(args *MapFinish, reply *TaskReply) error {
-	intermediateFileLock.Lock()
 	for _, file := range args.IntermediateFiles {
-		m.IntermediateFiles.PushBack(file)
+		m.IntermediateFiles.Add(file)
 	}
-	defer intermediateFileLock.Unlock()
+	m.TaskList.Remove("m", args.File)
+	defer wg.Done()
+	return nil
+}
+
+func (m *Master) ReduceFinish(args *ReduceFinish, reply *TaskReply) error {
+	m.TaskList.Remove("r", args.WorkerId)
 	return nil
 }
 
@@ -118,6 +183,8 @@ func (m *Master) server() {
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
+	time.Sleep(time.Second * 5)
+	m.checkCrash()
 	// Your code here.
 	return m.IsDone
 }
@@ -131,10 +198,14 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 
 	// Your code here.
-	m.InputFiles = files
+	m.InputFiles = NewSafeList()
+	for _, file := range files {
+		m.InputFiles.Add(file)
+	}
 	m.NReduce = nReduce
-	m.IntermediateFiles = list.New()
+	m.IntermediateFiles = NewSafeList()
 	m.IsDone = false
+	m.TaskList = NewSafeList()
 
 	m.server()
 	return &m

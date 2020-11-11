@@ -68,7 +68,7 @@ fi
 
 # wait for remaining workers and master to exit.
 wait ; wait ; wait
-exit 1
+
 # now indexer
 rm -f mr-*
 

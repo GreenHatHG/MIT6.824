@@ -2,6 +2,8 @@ package mr
 
 import (
 	"fmt"
+	"math/rand"
+	"time"
 )
 import "log"
 import "net/rpc"
@@ -32,7 +34,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-	args := RequestMapTask{WorkerId: getMapWorkerInstance().WorkerId}
+	args := RequestMapTask{WorkerId: getWorkerId()}
 	reply := TaskReply{}
 	call("Master.AssignTask", &args, &reply)
 	fmt.Printf("%+v\n", reply)
@@ -42,11 +44,19 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	if reply.WorkerType == "m" {
 		intermediateFiles := mapWorker(args, reply, mapf)
-		call("Master.AddIntermediateFile", &MapFinish{IntermediateFiles: intermediateFiles}, &TaskReply{})
+		call("Master.AddIntermediateFile", &MapFinish{
+			IntermediateFiles: intermediateFiles,
+			File:              reply.MapReply.File}, &TaskReply{})
 	} else if reply.WorkerType == "r" {
 		reduceWorker(args, reply, reducef)
+		call("Master.ReduceFinish", &ReduceFinish{WorkerId: reply.ReduceReply.WorkerId}, &TaskReply{})
 	}
 	Worker(mapf, reducef)
+}
+
+func getWorkerId() int {
+	rand.Seed(time.Now().UnixNano())
+	return rand.Intn(999999)
 }
 
 //
