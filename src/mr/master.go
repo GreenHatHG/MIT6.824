@@ -1,9 +1,9 @@
 package mr
 
 import (
-	"errors"
-	"fmt"
 	"log"
+	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,153 +13,147 @@ import "os"
 import "net/rpc"
 import "net/http"
 
+type TaskState int
+
+const (
+	Idle TaskState = iota
+	InProgress
+)
+
+type WorkerType int
+
+const (
+	Map WorkerType = iota
+	Reduce
+)
+
 type Task struct {
-	StartTime time.Time
-	File      string
+	WorkerId string
+	State    TaskState
+	Files    []string
 	//"m" or "r"
-	Type string
+	WorkerType WorkerType
 }
 
 type Master struct {
-	// Your definitions here.
-	InputFiles        *SafeList
+	InputFiles []string
+	//key: ReduceWorkerId
+	IntermediateFiles sync.Map
+	//key: WorkerId
+	TaskList       sync.Map
+	MapTaskChannel chan string
+	//ReduceWorkerId
+	ReduceTaskChannel chan string
 	NReduce           int
-	IntermediateFiles *SafeList
-	IsDone            bool
-	TaskList          *SafeList
+	MU                *sync.RWMutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
-var assignTaskLock sync.Mutex
-var wg sync.WaitGroup
 
-func (m *Master) AssignTask(args *RequestMapTask, reply *TaskReply) error {
-	assignTaskLock.Lock()
-
-	if m.InputFiles.Len() > 0 {
-		wg.Add(1)
-		m.startMapTask(reply)
-	} else if m.IntermediateFiles.Len() > 0 {
-		wg.Wait()
-		if m.InputFiles.Len() == 0 {
-			m.startReduceTask(reply)
-		}
-	} else {
-		m.isDone(reply)
+func (m *Master) putTask() {
+	for i := 0; i < m.NReduce; i++ {
+		m.ReduceTaskChannel <- strconv.Itoa(i)
 	}
+	for _, file := range m.InputFiles {
+		m.MapTaskChannel <- file
+	}
+}
 
-	assignTaskLock.Unlock()
+func (m *Master) AssignTask(args *Args, reply *TaskReply) error {
+	workerType := Map
+	if len(m.MapTaskChannel) == 0 && m.checkTaskIdle(Map) {
+		workerType = Reduce
+	}
+	reply.IsDone = m.isDone()
+	if workerType == Map {
+		mapFile := <-m.MapTaskChannel
+		m.startMapTask(mapFile, reply)
+	} else if workerType == Reduce {
+		reduceWorkerId := <-m.ReduceTaskChannel
+		if id, ok := m.IntermediateFiles.Load(reduceWorkerId); ok {
+			m.startReduceTask(id.([]string), reply)
+		}
+	}
 	return nil
 }
 
-func (m *Master) checkCrash() {
-	m.TaskList.MU.Lock()
-	log.Println("checkcrash")
-	for e := m.TaskList.Data.Front(); e != nil; {
-		if time.Now().Sub(e.Value.(Task).StartTime).Seconds() > 10.0 {
-			fmt.Println("checkcrash", e.Value.(Task))
-			if e.Value.(Task).Type == "m" {
-				wg.Done()
-				m.InputFiles.MU.Lock()
-				m.InputFiles.Add(e.Value.(Task).File)
-				m.InputFiles.MU.Unlock()
-			} else {
-				m.IntermediateFiles.MU.Lock()
-				m.IntermediateFiles.Add(e.Value.(Task).File)
-				m.IntermediateFiles.MU.Unlock()
-			}
-			next := e.Next()
-			m.TaskList.Remove(e.Value)
-			e = next
-		} else {
-			e = e.Next()
-		}
-	}
-	log.Println("checkcrash finish")
-	m.TaskList.MU.Unlock()
+func (m *Master) startMapTask(file string, reply *TaskReply) {
+	reply.WorkerType = Map
+	reply.WorkerId = m.getMapTaskWorkerId()
+	m.commonSetting([]string{file}, reply)
 }
 
-func (m *Master) startMapTask(reply *TaskReply) {
-	reply.MapReply.File = m.InputFiles.Data.Front().Value.(string)
-	m.TaskList.Add(Task{
-		StartTime: time.Now(),
-		File:      reply.MapReply.File,
-		Type:      "m",
+func (m *Master) startReduceTask(files []string, reply *TaskReply) {
+	reply.WorkerType = Reduce
+	reply.WorkerId = m.getReduceWorkerId(files[0])
+	m.commonSetting(files, reply)
+}
+
+func (m *Master) commonSetting(files []string, reply *TaskReply) {
+	reply.NReduce = m.NReduce
+	reply.Files = files
+	m.TaskList.Store(reply.WorkerId, Task{
+		WorkerId:   reply.WorkerId,
+		State:      InProgress,
+		Files:      files,
+		WorkerType: reply.WorkerType,
 	})
-	reply.WorkerType = "m"
-	reply.MapReply.NReduce = m.NReduce
-	m.InputFiles.Remove(m.InputFiles.Data.Front().Value)
+	go m.timeoutScheduledTask(reply.WorkerId)
 }
 
-func (m *Master) startReduceTask(reply *TaskReply) {
-	m.IntermediateFiles.MU.Lock()
-	//获取一个reduceWorkId
-	index, err := getReduceWorkerId(m.IntermediateFiles.Data.Front().Value.(string))
-	if err != nil {
-		m.IntermediateFiles.Remove(m.IntermediateFiles.Data.Front().Value)
-		return
-	}
+func (m *Master) getMapTaskWorkerId() string {
+	rand.Seed(time.Now().UnixNano())
+	min := 100
+	max := 200000
+	return strconv.Itoa(rand.Intn(max-min) + min)
+}
 
-	files := make([]string, 0, 0)
-	//找出所有与index相同的file
-	for e := m.IntermediateFiles.Data.Front(); e != nil; {
-		i, err := getReduceWorkerId(e.Value.(string))
-		if err != nil {
-			next := e.Next()
-			m.IntermediateFiles.Remove(e.Value)
-			e = next
-		} else if i == index {
-			next := e.Next()
-			files = append(files, e.Value.(string))
-			m.IntermediateFiles.Remove(e.Value)
-			e = next
+func (m *Master) MapTaskFinish(args *MapFinish, reply *TaskReply) error {
+	for _, file := range args.IntermediateFiles {
+		id := m.getReduceWorkerId(file)
+		if arr, ok := m.IntermediateFiles.Load(id); ok {
+			m.IntermediateFiles.Store(id, append(arr.([]string), file))
 		} else {
-			e = e.Next()
+			m.IntermediateFiles.Store(id, []string{file})
 		}
 	}
-
-	if len(files) > 0 {
-		m.TaskList.Add(Task{
-			StartTime: time.Now(),
-			//workerId
-			File: index,
-			Type: "r",
-		})
-		reply.WorkerType = "r"
-		reply.ReduceReply.WorkerId = index
-		reply.ReduceReply.Files = files
-	}
-	m.IntermediateFiles.MU.Unlock()
-}
-
-func (m *Master) isDone(reply *TaskReply) {
-	if m.InputFiles.Len() == 0 && m.IntermediateFiles.Len() == 0 {
-		reply.IsDone = true
-		m.IsDone = true
-	}
-}
-
-func (m *Master) AddIntermediateFile(args *MapFinish, reply *TaskReply) error {
-	for _, file := range args.IntermediateFiles {
-		m.IntermediateFiles.Add(file)
-	}
-	m.TaskList.Remove("m", args.File)
-	defer wg.Done()
+	m.initTaskState(args.WorkerId)
 	return nil
 }
 
-func (m *Master) ReduceFinish(args *ReduceFinish, reply *TaskReply) error {
-	m.TaskList.Remove("r", args.WorkerId)
+func (m *Master) ReduceTaskFinish(args *ReduceFinish, reply *TaskReply) error {
+	m.initTaskState(args.WorkerId)
 	return nil
 }
 
-func getReduceWorkerId(intermediateFile string) (string, error) {
+func (m *Master) getReduceWorkerId(intermediateFile string) string {
 	//"mr-X-Y"
 	arr := strings.Split(intermediateFile, "-")
 	if len(arr) == 3 && arr[2] != "" {
-		return arr[2], nil
+		return arr[2]
 	}
-	return "", errors.New(`reduceWorkerId is ""`)
+	return ""
+}
+
+func (m *Master) initTaskState(workerId string) {
+	m.TaskList.Store(workerId, Task{
+		State: Idle,
+	})
+}
+
+func (m *Master) checkTaskIdle(workerType WorkerType) bool {
+	//log.Println("checkTaskIdle", workerType)
+	flag := true
+	f := func(k, v interface{}) bool {
+		task := v.(Task)
+		if task.WorkerType == workerType && task.State != Idle {
+			flag = false
+			return false
+		}
+		return true
+	}
+	m.TaskList.Range(f)
+	return flag
 }
 
 //
@@ -182,11 +176,14 @@ func (m *Master) server() {
 // main/mrmaster.go calls Done() periodically to find out
 // if the entire job has finished.
 //
+func (m *Master) isDone() bool {
+	return m.checkTaskIdle(Map) && m.checkTaskIdle(Reduce) && len(m.MapTaskChannel) == 0 && len(m.ReduceTaskChannel) == 0
+}
+
 func (m *Master) Done() bool {
-	time.Sleep(time.Second * 5)
-	m.checkCrash()
-	// Your code here.
-	return m.IsDone
+	done := m.isDone()
+	//log.Println("done", done)
+	return done
 }
 
 //
@@ -198,14 +195,15 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 
 	// Your code here.
-	m.InputFiles = NewSafeList()
-	for _, file := range files {
-		m.InputFiles.Add(file)
-	}
+	m.TaskList = sync.Map{}
+	m.IntermediateFiles = sync.Map{}
+	m.MU = new(sync.RWMutex)
 	m.NReduce = nReduce
-	m.IntermediateFiles = NewSafeList()
-	m.IsDone = false
-	m.TaskList = NewSafeList()
+	m.MapTaskChannel = make(chan string, 5)
+	m.ReduceTaskChannel = make(chan string, nReduce)
+	m.InputFiles = files
+	go m.putTask()
+	time.Sleep(time.Second * 1)
 
 	m.server()
 	return &m

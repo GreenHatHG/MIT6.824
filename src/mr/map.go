@@ -12,14 +12,13 @@ type MapWorkerInstance struct {
 	WorkerId int
 }
 
-func mapWorker(args RequestMapTask, reply TaskReply, mapf func(string, string) []KeyValue) []string {
-	content, err := readFile(reply.MapReply.File)
+func mapWorker(reply *TaskReply, mapf func(string, string) []KeyValue) []string {
+	content, err := readFile(reply.Files[0])
 	if err != nil {
-		log.Fatalf("worker %v cannot open %v", args.WorkerId, reply.MapReply.File)
-		return []string{}
+		log.Fatalf("mapWorker:readFile error %v", err.Error())
 	}
-	kva := mapf(reply.MapReply.File, content)
-	return writeIntermediateFile(args, reply, kva)
+	kva := mapf(reply.Files[0], content)
+	return writeIntermediateFile(reply, kva)
 }
 
 func readFile(filename string) (string, error) {
@@ -37,16 +36,16 @@ func readFile(filename string) (string, error) {
 	return string(content), err
 }
 
-func writeIntermediateFile(args RequestMapTask, reply TaskReply, kva []KeyValue) []string {
+func writeIntermediateFile(reply *TaskReply, kva []KeyValue) []string {
 	shufflingData := make(map[int][]KeyValue)
 	for _, kv := range kva {
-		reduceWorkerId := ihash(kv.Key) % reply.MapReply.NReduce
+		reduceWorkerId := ihash(kv.Key) % reply.NReduce
 		shufflingData[reduceWorkerId] = append(shufflingData[reduceWorkerId], kv)
 	}
 
 	intermediateFiles := make([]string, 0, 0)
 	for index, kva := range shufflingData {
-		intermediateFile := fmt.Sprint("mr-", args.WorkerId, "-", index)
+		intermediateFile := fmt.Sprint("mr-", reply.WorkerId, "-", index)
 		intermediateFiles = append(intermediateFiles, intermediateFile)
 		tempFileAndRename(intermediateFile, kva)
 	}

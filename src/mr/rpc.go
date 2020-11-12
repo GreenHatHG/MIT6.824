@@ -10,8 +10,8 @@ import "os"
 import "strconv"
 
 // Add your RPC definitions here.
-type RequestMapTask struct {
-	WorkerId int
+
+type Args struct {
 }
 
 type ReduceFinish struct {
@@ -19,28 +19,18 @@ type ReduceFinish struct {
 }
 
 type MapFinish struct {
-	File              string
+	WorkerId          string
 	IntermediateFiles []string
-}
-
-type MapReply struct {
-	NReduce int
-	File    string
-}
-
-type ReduceReply struct {
-	//master指定ReduceWorkerId
-	//因为Map生成中间文件时已经带上ReduceWorkerId
-	WorkerId string
-	Files    []string
 }
 
 type TaskReply struct {
 	//"m" or "r"
-	WorkerType  string
-	MapReply    MapReply
-	ReduceReply ReduceReply
-	IsDone      bool
+	WorkerType WorkerType
+	WorkerId   string
+	NReduce    int
+	//mapTask only 1, reduceTask more
+	Files  []string
+	IsDone bool
 }
 
 // Cook up a unique-ish UNIX-domain socket name

@@ -2,8 +2,6 @@ package mr
 
 import (
 	"fmt"
-	"math/rand"
-	"time"
 )
 import "log"
 import "net/rpc"
@@ -30,33 +28,40 @@ func ihash(key string) int {
 //
 // main/mrworker.go calls this function.
 //
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
 
-	// Your worker implementation here.
-	args := RequestMapTask{WorkerId: getWorkerId()}
-	reply := TaskReply{}
-	call("Master.AssignTask", &args, &reply)
+func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
+	reply := &TaskReply{}
+	call("Master.AssignTask", &Args{}, reply)
 	fmt.Printf("%+v\n", reply)
 	if reply.IsDone {
 		return
 	}
 
-	if reply.WorkerType == "m" {
-		intermediateFiles := mapWorker(args, reply, mapf)
-		call("Master.AddIntermediateFile", &MapFinish{
-			IntermediateFiles: intermediateFiles,
-			File:              reply.MapReply.File}, &TaskReply{})
-	} else if reply.WorkerType == "r" {
-		reduceWorker(args, reply, reducef)
-		call("Master.ReduceFinish", &ReduceFinish{WorkerId: reply.ReduceReply.WorkerId}, &TaskReply{})
+	if reply.WorkerType == Map {
+		StartMapTask(reply, mapf)
+	} else if reply.WorkerType == Reduce {
+		StartReduceTask(reply, reducef)
 	}
 	Worker(mapf, reducef)
 }
 
-func getWorkerId() int {
-	rand.Seed(time.Now().UnixNano())
-	return rand.Intn(999999)
+func StartMapTask(reply *TaskReply, mapf func(string, string) []KeyValue) {
+	if len(reply.Files) == 0 {
+		return
+	}
+	intermediateFiles := mapWorker(reply, mapf)
+	call("Master.MapTaskFinish", &MapFinish{
+		WorkerId:          reply.WorkerId,
+		IntermediateFiles: intermediateFiles,
+	}, &TaskReply{})
+}
+
+func StartReduceTask(reply *TaskReply, reducef func(string, []string) string) {
+	if len(reply.Files) == 0 {
+		return
+	}
+	reduceWorker(reply, reducef)
+	call("Master.ReduceTaskFinish", &ReduceFinish{WorkerId: reply.WorkerId}, &TaskReply{})
 }
 
 //
