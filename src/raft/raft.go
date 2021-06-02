@@ -64,6 +64,7 @@ type Raft struct {
 	dead      int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
+	//2A
 	serverState ServerState
 	//initialized to 0 on first boot, increases monotonically
 	//latest term server has seen
@@ -72,6 +73,10 @@ type Raft struct {
 	votedFor         int
 	timer            *time.Timer
 	heartbeatsTicker *time.Ticker
+
+	//2B
+	logEntries  []interface{}
+	commitIndex int
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 }
@@ -176,6 +181,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 type AppendEntriesArgs struct {
 	//leader’s term
 	Term int
+
+	//2B
+	Entry interface{}
+	//leader’s commitIndex
+	LeaderCommit int
 }
 
 type AppendEntriesReply struct {
@@ -186,6 +196,7 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if 
 	if args.Term > rf.currentTerm {
 		rf.serverState = Follower
 		rf.resetTimeout()
@@ -242,14 +253,25 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // term. the third return value is true if this server believes it is
 // the leader.
 //
+// 使用Raft附加一条新command，如果此server不是leader，返回false，否则立即开始并立刻返回
+// 没有保证这个命令会被提交到Raft日志，因为领导人可能会失败或输掉选举
+// 即使Raft实例已经被终止，这个函数也应该优雅地返回
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-
 	// Your code here (2B).
-
-	return index, term, isLeader
+	isLeader := rf.serverState == Leader
+	if isLeader {
+		go func() {
+			rf.mu.Lock()
+			rf.logEntries = append(rf.logEntries, command)
+			rf.mu.Unlock()
+			sendAppendEntriesToOthers(rf.peers, rf.me, &AppendEntriesArgs{
+				Term:         rf.currentTerm,
+				Entry:        command,
+				LeaderCommit: rf.commitIndex,
+			}, &AppendEntriesReply{})
+		}()
+	}
+	return rf.commitIndex + 1, rf.currentTerm, isLeader
 }
 
 //
