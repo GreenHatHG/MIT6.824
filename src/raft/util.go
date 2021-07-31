@@ -1,64 +1,119 @@
 package raft
 
 import (
-	"../labrpc"
 	"log"
 	"math"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-func getTimeout() time.Duration {
-	rand.Seed(time.Now().UnixNano())
+func (rf *Raft) getTimeout() time.Duration {
 	min := 450
 	max := 600
-	timeout := rand.Intn(max-min) + min
+	timeout := rf.newRand.Intn(max-min) + min
 	return time.Duration(timeout) * time.Millisecond
 }
 
-func sendAppendEntriesToOthers(peers []*labrpc.ClientEnd, me int, args *AppendEntriesArgs, reply *AppendEntriesReply) (uint32, int) {
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func (rf *Raft) sendAppendEntriesToOthers() {
+	for i := range rf.peers {
+		if i == rf.me {
+			continue
+		}
+
+		go func(i int) {
+			rf.mu.Lock()
+			//这里可能为-1
+			prevLogIndex := rf.nextIndex[i] - 1
+			args := AppendEntriesArgs{
+				Term:         rf.currentTerm,
+				PrevLogIndex: prevLogIndex,
+			}
+			//存在上一个log entry
+			if prevLogIndex >= 0 {
+				args.Term = rf.logEntries[prevLogIndex].Term
+			}
+			//leader收到新的command
+			if len(rf.logEntries)-1 >= rf.nextIndex[i] {
+				args.LogEntries = rf.logEntries[rf.nextIndex[i]:]
+			}
+			rf.mu.Unlock()
+			reply := AppendEntriesReply{}
+
+			//是否发送成功
+			ok := rf.peers[i].Call("Raft.AppendEntries", &args, &reply)
+			log.Printf("%d 发送给 %d 的内容:%+v, 回复:%+v\n", rf.me, i, args, reply)
+			if !ok {
+				return
+			}
+
+			rf.mu.Lock()
+			//判断是不是过时的leader
+			if reply.Term > rf.currentTerm {
+				rf.heartbeatsTicker.Stop()
+				rf.serverState = Follower
+				return
+			}
+
+			if reply.Success {
+				rf.nextIndex[i] = prevLogIndex + 1 + len(args.LogEntries)
+				rf.sendApplyMsg(args.LogEntries)
+			}
+			rf.mu.Unlock()
+		}(i)
+	}
+}
+
+func (rf *Raft) sendApplyMsg(logEntries []LogEntry) {
+	for _, logEntry := range logEntries {
+		rf.applyMsg <- ApplyMsg{
+			CommandValid: true,
+			Command:      logEntry.Command,
+			CommandIndex: logEntry.Index,
+		}
+	}
+}
+
+func (rf *Raft) sendRequestVoteRPCToOthers() (uint32, int) {
 	var success uint32
 	var maxTerm int
 	wg := sync.WaitGroup{}
-	for i := range peers {
-		if i == me {
+	args := &RequestVoteArgs{
+		Term:        rf.currentTerm,
+		CandidateId: rf.me,
+	}
+	maxTermLocker := sync.Mutex{}
+	for i := range rf.peers {
+		if i == rf.me {
 			continue
 		}
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			ok := peers[i].Call("Raft.AppendEntries", args, reply)
-			if ok {
+			reply := &RequestVoteReply{}
+			log.Println(rf.me, "向", i, "发起选举")
+			ok := rf.peers[i].Call("Raft.RequestVote", args, reply)
+			log.Println(rf.me, "向", i, "发起选举，结果：", "ok:", ok, "VoteGranted:", reply.VoteGranted)
+			if ok && reply.VoteGranted {
 				atomic.AddUint32(&success, 1)
 			}
+			maxTermLocker.Lock()
 			maxTerm = int(math.Max(float64(maxTerm), float64(reply.Term)))
+			maxTermLocker.Unlock()
 		}(i)
 	}
 	wg.Wait()
 	return success, maxTerm
 }
 
-func sendRequestVoteRPCToOthers(peers []*labrpc.ClientEnd, me int, args *RequestVoteArgs, reply *RequestVoteReply) (uint32, int) {
-	var success uint32
-	var maxTerm int
-	wg := sync.WaitGroup{}
-	for i := range peers {
-		if i == me {
-			continue
-		}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			ok := peers[i].Call("Raft.RequestVote", args, reply)
-			if ok {
-				log.Println(me, "start", i, "election", "ok:", ok, "VoteGranted:", reply.VoteGranted)
-				atomic.AddUint32(&success, 1)
-			}
-			maxTerm = int(math.Max(float64(maxTerm), float64(reply.Term)))
-		}(i)
-	}
-	wg.Wait()
-	return success, maxTerm
+func (rf *Raft) resetToFollower() {
+	rf.serverState = Follower
+	rf.votedFor = -1
 }
