@@ -75,10 +75,10 @@ type Raft struct {
 	//latest term server has seen
 	currentTerm int
 	//candidateId that received vote in current term (or null if none)
-	votedFor         int
-	timer            *time.Timer
-	heartbeatsTicker *time.Ticker
-	newRand          *rand.Rand
+	votedFor              int
+	electionLastAccessed  time.Time
+	isHeartbeatTickerLive uint32
+	newRand               *rand.Rand
 
 	//2B
 	logEntries []LogEntry
@@ -183,10 +183,10 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	log.Printf("%d 处理RequestVote: %+v", rf.me, args)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	log.Printf("%d 处理RequestVote: %+v", rf.me, args)
 	reply.Term = rf.currentTerm
 
 	if rf.currentTerm > args.Term {
@@ -204,7 +204,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	//还没有投过票
 	rf.votedFor = args.CandidateId
 	reply.VoteGranted = true
-	rf.resetTimeout()
+	rf.electionLastAccessed = time.Now()
 
 	rf.currentTerm = args.Term
 	reply.Term = rf.currentTerm
@@ -240,22 +240,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	//心跳
-	if len(args.LogEntries) == 0 {
-		if args.Term >= rf.currentTerm {
-			rf.serverState = Follower
-			log.Println(rf.me, " 收到心跳，重置timeout")
-			rf.resetTimeout()
-			reply.Success = true
-		}
-		reply.Term = rf.currentTerm
-		return
-	}
+	reply.Term = rf.currentTerm
+	reply.Xterm = -1
+	reply.XIndex = -1
+	reply.XLen = len(rf.logEntries)
 
 	//AppendEntries RPC Receiver implementation 1
 	if rf.currentTerm > args.Term {
 		return
 	}
+
+	rf.serverState = Follower
+	rf.electionLastAccessed = time.Now()
+	log.Println(rf.me, "收到心跳，重置timeout", rf.electionLastAccessed)
 
 	//第一个log或者log一致
 	if args.PrevLogIndex == -1 || args.Term == rf.logEntries[args.PrevLogIndex].Term {
@@ -263,9 +260,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = true
 		//AppendEntries RPC Receiver implementation 5
 		if args.LeaderCommit > rf.commitIndex {
-			rf.commitIndex = minInt(args.LeaderCommit, len(rf.logEntries)-1)
+			min := minInt(args.LeaderCommit, len(rf.logEntries)-1)
+			for i := rf.commitIndex + 1; i <= min; i++ {
+				log.Printf("%d apply msg: %+v\n", rf.me, rf.logEntries[i])
+				rf.applyMsg <- ApplyMsg{
+					CommandValid: true,
+					Command:      rf.logEntries[i].Command,
+					CommandIndex: rf.logEntries[i].Index + 1,
+				}
+			}
 		}
 		return
+	}
+
+	reply.Xterm = rf.logEntries[args.PrevLogIndex].Term
+	for i, v := range rf.logEntries {
+		if v.Term == reply.Xterm {
+			reply.XIndex = i
+			break
+		}
 	}
 }
 
@@ -339,7 +352,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	})
 	rf.nextIndex[rf.me]++
 
-	return len(rf.logEntries) - 1, rf.currentTerm, isLeader
+	return len(rf.logEntries), rf.currentTerm, isLeader
 }
 
 //
@@ -355,11 +368,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 //
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
-	if rf.heartbeatsTicker != nil {
-		rf.heartbeatsTicker.Stop()
+	if atomic.LoadUint32(&rf.isHeartbeatTickerLive) == 1 {
+		atomic.StoreUint32(&rf.isHeartbeatTickerLive, 0)
 	}
 	// Your code here, if desired.
-	log.Println(rf.me, "已经被kill")
+	rf.mu.Lock()
+	log.Println(rf.me, rf.serverState, "已经被kill")
+	rf.mu.Unlock()
 }
 
 func (rf *Raft) killed() bool {
@@ -381,29 +396,29 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) election() {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	rf.serverState = Candidate
 	rf.currentTerm++
 	log.Println(rf.me, "更新currentTerm为", rf.currentTerm)
 	rf.votedFor = rf.me
 	log.Println(rf.me, " 选举开始 重置心跳")
-	rf.resetTimeout()
+	rf.electionLastAccessed = time.Now()
+	rf.mu.Unlock()
 
 	success, maxTerm := rf.sendRequestVoteRPCToOthers()
+	log.Println(rf.me, "选举结果", success, maxTerm)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	if maxTerm > rf.currentTerm {
 		rf.resetToFollower()
 		rf.currentTerm = maxTerm
-		log.Println(rf.me, "更新currentTerm为", rf.currentTerm)
+		log.Println("选举成功，出现更大term", rf.me, "更新currentTerm为", rf.currentTerm)
 		return
 	}
 
-	if success+1 > uint32(len(rf.peers))/2 {
+	if rf.isMajority(success) {
 		log.Println("选举成功", rf.me)
 		rf.serverState = Leader
-		rf.timer.Stop()
-		log.Println(rf.me, "选举成功后发送心跳")
-		rf.sendAppendEntriesToOthers()
 		rf.startHeartbeats()
 		for i := range rf.peers {
 			rf.nextIndex[i] = len(rf.logEntries)
@@ -416,39 +431,46 @@ func (rf *Raft) election() {
 }
 
 func (rf *Raft) startHeartbeats() {
-	rf.mu.Lock()
-	rf.heartbeatsTicker = time.NewTicker(150 * time.Millisecond)
-	rf.mu.Unlock()
+	//已经开启
+	if atomic.LoadUint32(&rf.isHeartbeatTickerLive) == 1 {
+		return
+	}
+	//否则则启动一个定时器发送心跳
+	atomic.StoreUint32(&rf.isHeartbeatTickerLive, 1)
 	go func() {
-		for {
-			select {
-			case <-rf.heartbeatsTicker.C:
-				log.Println(rf.me, "定时器生效后发送心跳")
-				rf.sendAppendEntriesToOthers()
-			}
+		for atomic.LoadUint32(&rf.isHeartbeatTickerLive) == 1 {
+			log.Println(rf.me, "定时器生效后发送心跳")
+			rf.sendAppendEntriesToOthers()
+			time.Sleep(100 * time.Millisecond)
 		}
 	}()
 }
 
-func (rf *Raft) resetTimeout() {
-	timeout := rf.getTimeout()
-	log.Println(rf.me, "重置TimeOut为", timeout)
-	rf.timer.Reset(timeout)
+func (rf *Raft) manageLifecycle() {
+	for {
+		rf.mu.Lock()
+		state := rf.serverState
+		rf.mu.Unlock()
+		if state == Follower {
+			rf.electionTimer()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (rf *Raft) electionTimer() {
 	timeout := rf.getTimeout()
-	rf.timer = time.NewTimer(timeout)
-	log.Println(rf.me, "开启electionTimer：", timeout)
-	go func() {
-		for {
-			select {
-			case <-rf.timer.C:
-				log.Println(rf.me, "timeout到钟，发起选举")
-				rf.election()
-			}
-		}
-	}()
+	log.Println(rf.me, "选举定时器睡眠", timeout)
+	time.Sleep(timeout)
+
+	rf.mu.Lock()
+	lastAccessed := rf.electionLastAccessed
+	rf.mu.Unlock()
+
+	if time.Now().Sub(lastAccessed).Milliseconds() >= timeout.Milliseconds() {
+		log.Println(rf.me, "timeout到钟，发起选举", lastAccessed)
+		rf.election()
+	}
 }
 
 func Make(peers []*labrpc.ClientEnd, me int,
@@ -462,12 +484,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.serverState = Follower
 	rf.applyMsg = applyCh
 	rf.votedFor = -1
+	rf.commitIndex = -1
+	rf.currentTerm = 0
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.logEntries = make([]LogEntry, 0)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 	rf.newRand = rand.New(rand.NewSource(time.Now().UnixNano() + int64(rf.me*10000)))
-	go rf.electionTimer()
+	go rf.manageLifecycle()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
