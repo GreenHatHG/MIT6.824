@@ -234,7 +234,7 @@ func (cfg *config) cleanup() {
 // attach server i to the net.
 func (cfg *config) connect(i int) {
 	// fmt.Printf("connect(%d)\n", i)
-
+	log.Println("--------------------------------------connect", i)
 	cfg.connected[i] = true
 
 	// outgoing ClientEnds
@@ -257,7 +257,7 @@ func (cfg *config) connect(i int) {
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
 	// fmt.Printf("disconnect(%d)\n", i)
-
+	log.Println("--------------------------------------disconnect", i)
 	cfg.connected[i] = false
 
 	// outgoing ClientEnds
@@ -359,7 +359,7 @@ func (cfg *config) checkNoLeader() {
 	}
 }
 
-// how many servers think a log entry is committed?
+// how many servers think a raftLog entry is committed?
 func (cfg *config) nCommitted(index int) (int, interface{}) {
 	count := 0
 	var cmd interface{} = nil

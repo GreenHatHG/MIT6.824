@@ -8,30 +8,35 @@ package raft
 // rf = Make(...)
 //   create a new Raft server.
 // rf.Start(command interface{}) (index, term, isleader)
-//   start agreement on a new log entry
+//   start agreement on a new raftLog entry
 // rf.GetState() (term, isLeader)
 //   ask a Raft for its current term, and whether it thinks it is leader
 // ApplyMsg
-//   each time a new entry is committed to the log, each Raft peer
+//   each time a new entry is committed to the raftLog, each Raft peer
 //   should send an ApplyMsg to the service (or tester)
 //   in the same server.
 //
 
-import "sync"
+import (
+	"fmt"
+	"io/ioutil"
+	"log"
+	//"os"
+	"strings"
+	"sync"
+)
 import "sync/atomic"
 import "../labrpc"
 
 // import "bytes"
 // import "../labgob"
 
-
-
 //
-// as each Raft peer becomes aware that successive log entries are
+// as each Raft peer becomes aware that successive raftLog entries are
 // committed, the peer should send an ApplyMsg to the service (or
 // tester) on the same server, via the applyCh passed to Make(). set
 // CommandValid to true to indicate that the ApplyMsg contains a newly
-// committed log entry.
+// committed raftLog entry.
 //
 // in Lab 3 you'll want to send other kinds of messages (e.g.,
 // snapshots) on the applyCh; at that point you can add fields to
@@ -42,6 +47,14 @@ type ApplyMsg struct {
 	Command      interface{}
 	CommandIndex int
 }
+
+type ServerState int
+
+const (
+	Leader ServerState = iota
+	Follower
+	Candidate
+)
 
 //
 // A Go object implementing a single Raft peer.
@@ -56,17 +69,23 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-
+	raftLog         *log.Logger
+	timeoutInterval int
+	tick            func()
+	serverState     ServerState
+	votedFor        int
+	currentTerm     int
 }
 
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
-	var term int
-	var isleader bool
 	// Your code here (2A).
-	return term, isleader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	term := rf.currentTerm
+	isLeader := rf.serverState == Leader
+	return term, isLeader
 }
 
 //
@@ -84,7 +103,6 @@ func (rf *Raft) persist() {
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
 }
-
 
 //
 // restore previously persisted state.
@@ -108,15 +126,16 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 }
 
-
-
-
 //
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	//candidate’s term
+	Term int
+	//candidate requesting vote
+	CandidateId int
 }
 
 //
@@ -125,6 +144,20 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	//currentTerm, for candidate to update itself
+	Term int
+	//true means candidate received vote
+	VoteGranted bool
+}
+
+type AppendEntriesArgs struct {
+	//leader’s term
+	Term int
+}
+
+type AppendEntriesReply struct {
+	//currentTerm, for leader to update itself
+	Term int
 }
 
 //
@@ -132,6 +165,44 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	rf.raftLog.Printf("处理RequestVote: %+v\n", args)
+	reply.Term = rf.currentTerm
+	if rf.currentTerm > args.Term {
+		return
+	}
+	if rf.currentTerm == args.Term && rf.votedFor != -1 {
+		return
+	}
+	if rf.currentTerm == args.Term && rf.votedFor == args.CandidateId {
+		reply.VoteGranted = true
+		return
+	}
+
+	//已经投过票，但是要即将要票的term大于当前term
+	//或者还没有投过票
+	rf.votedFor = args.CandidateId
+	reply.VoteGranted = true
+
+	rf.currentTerm = args.Term
+	rf.raftLog.Printf("处理RequestVote中存在更大Term，更新currentTerm为[%d]", args.Term)
+	rf.serverState = Follower
+	rf.timeoutInterval = 0
+}
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.raftLog.Printf("处理AppendEntries: %+v\n", args)
+	reply.Term = rf.currentTerm
+	if rf.currentTerm > args.Term {
+		return
+	}
+	rf.currentTerm = args.Term
+	rf.raftLog.Println("更新currentTerm为", rf.currentTerm)
+	rf.becomeFollower()
 }
 
 //
@@ -168,13 +239,12 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-
 //
 // the service using Raft (e.g. a k/v server) wants to start
-// agreement on the next command to be appended to Raft's log. if this
+// agreement on the next command to be appended to Raft's raftLog. if this
 // server isn't the leader, returns false. otherwise start the
 // agreement and return immediately. there is no guarantee that this
-// command will ever be committed to the Raft log, since the leader
+// command will ever be committed to the Raft raftLog, since the leader
 // may fail or lose an election. even if the Raft instance has been killed,
 // this function should return gracefully.
 //
@@ -189,7 +259,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
 
 	return index, term, isLeader
 }
@@ -207,7 +276,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 //
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	// Your code here, if desired.
+	log.Println("--------------------------------------", rf.me, "kill")
 }
 
 func (rf *Raft) killed() bool {
@@ -229,15 +301,19 @@ func (rf *Raft) killed() bool {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
+	writer := ioutil.Discard
+	//writer := os.Stdout
+	rf.raftLog = log.New(writer, fmt.Sprintf("%s【%d】", strings.Repeat("*", me*3), me),
+		log.LstdFlags|log.Lmicroseconds|log.Lshortfile)
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
-
+	rf.becomeFollower()
+	go rf.ticker()
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
 
 	return rf
 }
