@@ -208,13 +208,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	rf.Log("处理RequestVote: %+v\n", args)
 	reply.Term = rf.currentTerm
+
 	if rf.currentTerm > args.Term {
 		return
 	}
-
-	if voteOrNot := rf.votedFor == -1 || rf.votedFor == args.CandidateId; !voteOrNot {
+	if rf.currentTerm == args.Term && rf.votedFor != -1 {
 		return
 	}
+
 	//确保日志至少和接收者一样新
 	if args.LastLogTerm < rf.logEntries[len(rf.logEntries)-1].Term {
 		return
@@ -246,7 +247,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.becomeFollower()
 
 	//日志缺少
-	if args.PrevLogIndex > len(rf.logEntries) {
+	if args.PrevLogIndex >= len(rf.logEntries) {
 		rf.Log("PrevLogIndex位置缺少日志\n")
 		return
 	}
