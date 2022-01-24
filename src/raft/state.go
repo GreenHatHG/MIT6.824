@@ -8,16 +8,19 @@ func (rf *Raft) becomeFollower() {
 }
 
 func (rf *Raft) becomeLeader() {
-	rf.raftLog.Println("---------------转变为leader")
+	rf.Log("---------------转变为leader\n")
 	rf.serverState = Leader
 	rf.timeoutInterval = 2
 	rf.votedFor = -1
 	rf.tick = rf.heartBeatTicker
+	for i := range rf.peers {
+		rf.nextIndex[i] = len(rf.logEntries)
+	}
 	go rf.heartBeatTicker()
 }
 
 func (rf *Raft) becomeCandidate() {
-	rf.raftLog.Println("---------------转变为candidate")
+	rf.Log("---------------转变为candidate\n")
 	rf.serverState = Candidate
 	rf.currentTerm++
 	rf.votedFor = rf.me

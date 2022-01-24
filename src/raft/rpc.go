@@ -2,6 +2,7 @@ package raft
 
 import (
 	"math"
+	"sync"
 	"time"
 )
 
@@ -16,8 +17,10 @@ func (rf *Raft) requestVoteRPC(currentTerm int) (bool, int) {
 	go rf.requestVoteReplyHandler(replyC, resC)
 
 	args := &RequestVoteArgs{
-		Term:        currentTerm,
-		CandidateId: rf.me,
+		Term:         currentTerm,
+		CandidateId:  rf.me,
+		LastLogIndex: len(rf.logEntries) - 1,
+		LastLogTerm:  rf.logEntries[len(rf.logEntries)-1].Term,
 	}
 
 	for server := range rf.peers {
@@ -29,9 +32,13 @@ func (rf *Raft) requestVoteRPC(currentTerm int) (bool, int) {
 			reply := &RequestVoteReply{}
 
 			t := time.Now()
-			rf.raftLog.Printf("开始向[%d]索要投票\n", server)
+			rf.Log("开始向[%d]索要投票\n", server)
+
 			ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-			rf.raftLog.Printf("向[%d]索要投票的结果，发送时间: %v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
+
+			rf.mu.Lock()
+			rf.Log("向[%d]索要投票的结果，发送时间: %v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
+			rf.mu.Unlock()
 
 			if !ok {
 				return
@@ -59,43 +66,93 @@ func (rf *Raft) requestVoteReplyHandler(replyC <-chan *RequestVoteReply, res cha
 	res <- requestVoteRes{}
 }
 
-func (rf *Raft) appendEntriesRPC(currentTerm int) int {
-	replyC := make(chan *AppendEntriesReply, len(rf.peers)-1)
-	resC := make(chan int, 1)
-	go rf.appendEntriesReplyHandler(replyC, resC, currentTerm)
+func (rf *Raft) appendEntriesRPC() int {
+	term := make(chan int, len(rf.peers)-1)
+	wg := sync.WaitGroup{}
+	wg.Add(len(rf.peers) - 1)
+	numCommit := 1
+	hasCommited := false
 
-	for server := range rf.peers {
-		server := server
-		if server == rf.me {
+	go func() {
+		//没有最大的term大于leader的，返回-1，不会被任何处理
+		wg.Wait()
+		term <- -1
+	}()
+
+	rf.mu.Lock()
+	currentTerm := rf.currentTerm
+	rf.mu.Unlock()
+
+	for i := range rf.peers {
+		i := i
+		if i == rf.me {
 			continue
 		}
+
 		go func() {
+			defer wg.Done()
+			rf.mu.Lock()
+			if rf.serverState != Leader {
+				rf.mu.Unlock()
+				return
+			}
+			lastLogIndex := len(rf.logEntries) - 1
+			nextIndex := rf.nextIndex[i]
+			prevLogIndex := nextIndex - 1
+			commitIndex := rf.commitIndex
 			args := &AppendEntriesArgs{
-				Term: currentTerm,
+				Term:         currentTerm,
+				PrevLogIndex: prevLogIndex,
+				LeaderCommit: commitIndex,
+				PrevLogTerm:  rf.logEntries[prevLogIndex].Term,
 			}
 			reply := &AppendEntriesReply{}
+			//要发送给follower的log
+			if lastLogIndex >= nextIndex {
+				args.LogEntries = rf.logEntries[nextIndex:]
+			}
+			rf.mu.Unlock()
 
 			t := time.Now()
-			rf.raftLog.Printf("开始向[%d]发送心跳\n", server)
-			ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-			rf.raftLog.Printf("向[%d]发送心跳，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
+			rf.Log("开始向[%d]发送心跳\n", i)
+			ok := rf.peers[i].Call("Raft.AppendEntries", args, reply)
+
+			rf.mu.Lock()
+			rf.Log("向[%d]发送appendEntriesRPC返回，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", i, t, ok, args, reply)
+			rf.mu.Unlock()
 
 			if !ok {
 				return
 			}
-			replyC <- reply
+			//leader过期
+			if reply.Term > currentTerm {
+				term <- reply.Term
+				return
+			}
+
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
+			if rf.serverState != Leader {
+				return
+			}
+			//发送日志成功
+			if reply.Success {
+				numCommit++
+				if !hasCommited && numCommit > len(rf.peers)/2 {
+					hasCommited = true
+					rf.commitIndex = prevLogIndex + len(args.LogEntries)
+					for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+						rf.applyMsg <- ApplyMsg{true, rf.logEntries[i].Command, i}
+					}
+					rf.Log("apply msg: %+v\n", args.LogEntries)
+					rf.lastApplied = rf.commitIndex
+				}
+				rf.nextIndex[i] = prevLogIndex + len(args.LogEntries) + 1
+				rf.matchIndex[i] = prevLogIndex + len(args.LogEntries)
+				return
+			}
+			rf.nextIndex[i]--
 		}()
 	}
-	return <-resC
-}
-
-func (rf *Raft) appendEntriesReplyHandler(replyC <-chan *AppendEntriesReply, res chan<- int,
-	currentTerm int) {
-	for reply := range replyC {
-		if reply.Term > currentTerm {
-			res <- reply.Term
-			return
-		}
-	}
-	res <- 0
+	return <-term
 }

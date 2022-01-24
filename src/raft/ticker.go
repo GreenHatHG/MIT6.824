@@ -15,50 +15,52 @@ func (rf *Raft) ticker() {
 func (rf *Raft) electTicker() {
 	rf.mu.Lock()
 	interval := rf.getRandomInterval()
-	rf.raftLog.Println("electTicker, 获取的interval:", interval, "当前timeoutInterval:", rf.timeoutInterval)
+	//rf.raftLog.Println("electTicker, 获取的interval:", interval, "当前timeoutInterval:", rf.timeoutInterval)
 	if rf.timeoutInterval < interval || rf.serverState == Leader {
 		rf.mu.Unlock()
 		return
 	}
-	rf.raftLog.Printf("选举定时器到时，转变为Candidate，发起选举")
+	rf.Log("选举定时器到时，转变为Candidate，发起选举\n")
 	rf.becomeCandidate()
 	currentTerm := rf.currentTerm
 	rf.mu.Unlock()
 
 	majority, maxTerm := rf.requestVoteRPC(currentTerm)
-	rf.raftLog.Println("请求投票返回，majority:", majority, "maxTerm:", maxTerm)
+	rf.Log("请求投票返回，majority:", majority, "maxTerm:", maxTerm)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.serverState != Candidate {
-		rf.raftLog.Printf("不是Candidate，退出选举，当前状态为[%d]\n", rf.serverState)
+		rf.Log("不是Candidate，退出选举，当前状态为[%d]\n", rf.serverState)
 		return
 	}
 
 	if maxTerm > rf.currentTerm {
 		rf.currentTerm = maxTerm
 		rf.becomeFollower()
-		rf.raftLog.Printf("选举失败，存在更大Term，rf.currentTerm更新为[%d]\n", maxTerm)
+		rf.Log("选举失败，存在更大Term，rf.currentTerm更新为[%d]\n", maxTerm)
 		return
 	}
 
 	if majority {
-		rf.raftLog.Printf("-----------------------选举成功")
+		rf.Log("-----------------------选举成功\n")
 		rf.becomeLeader()
+	} else {
+		rf.Log("-----------------------选举失败，重置voteFor\n")
+		rf.votedFor = -1
 	}
 }
 
 func (rf *Raft) heartBeatTicker() {
 	rf.mu.Lock()
-	rf.raftLog.Println("heartBeatTicker, 当前timeoutInterval:", rf.timeoutInterval)
+	//rf.raftLog.Println("heartBeatTicker, 当前timeoutInterval:", rf.timeoutInterval)
 	if rf.timeoutInterval < 2 || rf.serverState != Leader {
 		rf.mu.Unlock()
 		return
 	}
-	currentTerm := rf.currentTerm
 	rf.timeoutInterval = 0
 	rf.mu.Unlock()
-	maxTerm := rf.appendEntriesRPC(currentTerm)
+	maxTerm := rf.appendEntriesRPC()
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -68,6 +70,6 @@ func (rf *Raft) heartBeatTicker() {
 	if maxTerm > rf.currentTerm {
 		rf.currentTerm = maxTerm
 		rf.becomeFollower()
-		rf.raftLog.Printf("心跳结束后转变为follower，存在更大Term，rf.currentTerm更新为[%d]\n", maxTerm)
+		rf.Log("心跳结束后转变为follower，存在更大Term，rf.currentTerm更新为[%d]\n", maxTerm)
 	}
 }
