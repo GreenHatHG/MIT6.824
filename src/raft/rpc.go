@@ -12,16 +12,18 @@ type requestVoteRes struct {
 }
 
 func (rf *Raft) requestVoteRPC(currentTerm int) (bool, int) {
-	replyC := make(chan *RequestVoteReply, len(rf.peers)-1)
-	resC := make(chan requestVoteRes)
-	go rf.requestVoteReplyHandler(replyC, resC)
+	//本身自投一票
+	success, maxTerm := 1, 0
 
+	resC := make(chan requestVoteRes, len(rf.peers)-1)
+	rf.mu.Lock()
 	args := &RequestVoteArgs{
 		Term:         currentTerm,
 		CandidateId:  rf.me,
 		LastLogIndex: len(rf.logEntries) - 1,
 		LastLogTerm:  rf.logEntries[len(rf.logEntries)-1].Term,
 	}
+	rf.mu.Unlock()
 
 	for server := range rf.peers {
 		server := server
@@ -37,33 +39,24 @@ func (rf *Raft) requestVoteRPC(currentTerm int) (bool, int) {
 			ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 
 			rf.mu.Lock()
-			rf.Log("向[%d]索要投票的结果，发送时间: %v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
-			rf.mu.Unlock()
+			defer rf.mu.Unlock()
 
+			rf.Log("向[%d]索要投票的结果，发送时间: %v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
 			if !ok {
 				return
 			}
-			replyC <- reply
+
+			if reply.VoteGranted {
+				success++
+			}
+			maxTerm = int(math.Max(float64(maxTerm), float64(reply.Term)))
+			if rf.isMajority(success) {
+				resC <- requestVoteRes{true, maxTerm}
+			}
 		}()
 	}
 	res := <-resC
 	return res.majority, res.maxTerm
-}
-
-func (rf *Raft) requestVoteReplyHandler(replyC <-chan *RequestVoteReply, res chan<- requestVoteRes) {
-	//本身自投一票
-	success, maxTerm := 1, 0
-	for reply := range replyC {
-		if reply.VoteGranted {
-			success++
-		}
-		maxTerm = int(math.Max(float64(maxTerm), float64(reply.Term)))
-		if rf.isMajority(success) {
-			res <- requestVoteRes{true, maxTerm}
-			return
-		}
-	}
-	res <- requestVoteRes{}
 }
 
 func (rf *Raft) appendEntriesRPC() int {
@@ -71,7 +64,7 @@ func (rf *Raft) appendEntriesRPC() int {
 	wg := sync.WaitGroup{}
 	wg.Add(len(rf.peers) - 1)
 	numCommit := 1
-	hasCommited := false
+	hasCommitted := false
 
 	go func() {
 		//没有最大的term大于leader的，返回-1，不会被任何处理
@@ -138,20 +131,23 @@ func (rf *Raft) appendEntriesRPC() int {
 			//发送日志成功
 			if reply.Success {
 				numCommit++
-				if !hasCommited && numCommit > len(rf.peers)/2 {
-					hasCommited = true
+				if !hasCommitted && numCommit > len(rf.peers)/2 {
+					hasCommitted = true
 					rf.commitIndex = prevLogIndex + len(args.LogEntries)
-					for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-						rf.applyMsg <- ApplyMsg{true, rf.logEntries[i].Command, i}
-					}
-					rf.Log("apply msg: %+v\n", args.LogEntries)
-					rf.lastApplied = rf.commitIndex
+					rf.applyLogs()
 				}
 				rf.nextIndex[i] = prevLogIndex + len(args.LogEntries) + 1
 				rf.matchIndex[i] = prevLogIndex + len(args.LogEntries)
 				return
 			}
-			rf.nextIndex[i]--
+			//如果leader没有conflictTerm的日志，那么重新发送所有日志
+			rf.nextIndex[i] = 1
+			for j := reply.ConflictIndex; j > 0; j-- {
+				if rf.logEntries[j].Term == reply.ConflictTerm {
+					rf.nextIndex[j] = j + 1
+					break
+				}
+			}
 		}()
 	}
 	return <-term

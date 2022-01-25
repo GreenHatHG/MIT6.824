@@ -26,6 +26,15 @@ func (rf *Raft) isMajority(success int) bool {
 	return majority
 }
 
+func (rf *Raft) applyLogs() {
+	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+		msg := ApplyMsg{true, rf.logEntries[i].Command, i}
+		rf.applyMsg <- msg
+		rf.Log("apply msg: %+v\n", msg)
+	}
+	rf.lastApplied = rf.commitIndex
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a

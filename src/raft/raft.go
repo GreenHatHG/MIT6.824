@@ -196,6 +196,9 @@ type AppendEntriesReply struct {
 	Term int
 	//2B
 	Success bool
+
+	ConflictIndex int
+	ConflictTerm  int
 }
 
 // RequestVote
@@ -246,32 +249,33 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.Log("更新currentTerm为[%d]\n", rf.currentTerm)
 	rf.becomeFollower()
 
-	//日志缺少
-	if args.PrevLogIndex >= len(rf.logEntries) {
+	if args.PrevLogIndex > len(rf.logEntries)-1 {
+		reply.ConflictIndex = len(rf.logEntries) - 1
+		reply.ConflictTerm = rf.logEntries[reply.ConflictIndex].Term
 		rf.Log("PrevLogIndex位置缺少日志\n")
 		return
 	}
-	//delete the conflicted entry and all that follow it
 	if rf.logEntries[args.PrevLogIndex].Term != args.PrevLogTerm {
-		rf.Log("存在冲突log\n")
-		rf.logEntries = rf.logEntries[:args.PrevLogIndex]
+		reply.ConflictTerm = rf.logEntries[args.PrevLogIndex].Term
+		for i := args.PrevLogIndex; i > 0; i-- {
+			reply.ConflictIndex = i
+			if rf.logEntries[i].Term != reply.ConflictTerm {
+				break
+			}
+		}
+		rf.Log("PrevLogIndex Term冲突\n")
 		return
 	}
 
-	reply.Success = true
-	for _, entry := range args.LogEntries {
-		rf.logEntries = append(rf.logEntries, entry)
-		rf.Log("apply msg: %+v\n", entry)
-		rf.applyMsg <- ApplyMsg{
-			CommandValid: true,
-			Command:      entry.Command,
-			CommandIndex: rf.commitIndex + 1,
-		}
-		rf.commitIndex++
-	}
+	rf.logEntries = rf.logEntries[:args.PrevLogIndex+1]
+	//entries := make([]LogEntry, len(args.LogEntries))
+	//copy(entries, args.LogEntries)
+	rf.logEntries = append(rf.logEntries, args.LogEntries...)
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = minInt(args.LeaderCommit, len(rf.logEntries)-1)
+		rf.applyLogs()
 	}
+	reply.Success = true
 }
 
 //
@@ -327,7 +331,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 
 	isLeader := rf.serverState == Leader
-	index := rf.commitIndex + 1
 
 	if isLeader {
 		rf.Log("-------------------接收到command: %+v", command)
@@ -338,7 +341,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.nextIndex[rf.me]++
 	}
 
-	return index, rf.currentTerm, isLeader
+	return len(rf.logEntries) - 1, rf.currentTerm, isLeader
 }
 
 // Kill the tester doesn't halt goroutines created by Raft after each test,

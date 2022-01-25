@@ -26,7 +26,7 @@ func (rf *Raft) electTicker() {
 	rf.mu.Unlock()
 
 	majority, maxTerm := rf.requestVoteRPC(currentTerm)
-	rf.Log("请求投票返回，majority:", majority, "maxTerm:", maxTerm)
+	rf.Log("请求投票返回，majority:%t maxTerm:%d", majority, maxTerm)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -45,9 +45,6 @@ func (rf *Raft) electTicker() {
 	if majority {
 		rf.Log("-----------------------选举成功\n")
 		rf.becomeLeader()
-	} else {
-		rf.Log("-----------------------选举失败，重置voteFor\n")
-		rf.votedFor = -1
 	}
 }
 
