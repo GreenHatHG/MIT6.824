@@ -8,7 +8,7 @@ func (rf *Raft) becomeFollower() {
 }
 
 func (rf *Raft) becomeLeader() {
-	rf.Log("---------------转变为leader\n")
+	rf.Warn("---------------转变为leader\n")
 	rf.serverState = Leader
 	rf.timeoutInterval = 2
 	rf.votedFor = -1
@@ -20,7 +20,7 @@ func (rf *Raft) becomeLeader() {
 }
 
 func (rf *Raft) becomeCandidate() {
-	rf.Log("---------------转变为candidate\n")
+	rf.Warn("---------------转变为candidate\n")
 	rf.serverState = Candidate
 	rf.currentTerm++
 	rf.votedFor = rf.me

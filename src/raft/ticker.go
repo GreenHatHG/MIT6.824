@@ -20,30 +20,30 @@ func (rf *Raft) electTicker() {
 		rf.mu.Unlock()
 		return
 	}
-	rf.Log("选举定时器到时，转变为Candidate，发起选举\n")
+	rf.Info("选举定时器到时，转变为Candidate，发起选举\n")
 	rf.becomeCandidate()
 	currentTerm := rf.currentTerm
 	rf.mu.Unlock()
 
 	majority, maxTerm := rf.requestVoteRPC(currentTerm)
-	rf.Log("请求投票返回，majority:%t maxTerm:%d", majority, maxTerm)
+	rf.Info("请求投票返回，majority:%t maxTerm:%d", majority, maxTerm)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.serverState != Candidate {
-		rf.Log("不是Candidate，退出选举，当前状态为[%d]\n", rf.serverState)
+		rf.Info("不是Candidate，退出选举，当前状态为[%d]\n", rf.serverState)
 		return
 	}
 
 	if maxTerm > rf.currentTerm {
 		rf.currentTerm = maxTerm
 		rf.becomeFollower()
-		rf.Log("选举失败，存在更大Term，rf.currentTerm更新为[%d]\n", maxTerm)
+		rf.Info("选举失败，存在更大Term，rf.currentTerm更新为[%d]\n", maxTerm)
 		return
 	}
 
 	if majority {
-		rf.Log("-----------------------选举成功\n")
+		rf.Info("-----------------------选举成功\n")
 		rf.becomeLeader()
 	}
 }
@@ -67,6 +67,6 @@ func (rf *Raft) heartBeatTicker() {
 	if maxTerm > rf.currentTerm {
 		rf.currentTerm = maxTerm
 		rf.becomeFollower()
-		rf.Log("心跳结束后转变为follower，存在更大Term，rf.currentTerm更新为[%d]\n", maxTerm)
+		rf.Info("心跳结束后转变为follower，存在更大Term，rf.currentTerm更新为[%d]\n", maxTerm)
 	}
 }

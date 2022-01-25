@@ -18,8 +18,6 @@ package raft
 //
 
 import (
-	"log"
-
 	"sync"
 )
 import "sync/atomic"
@@ -209,7 +207,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	rf.Log("处理RequestVote: %+v\n", args)
+	rf.Info("处理RequestVote: %+v\n", args)
 	reply.Term = rf.currentTerm
 
 	if rf.currentTerm > args.Term {
@@ -230,7 +228,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VoteGranted = true
 
 	rf.currentTerm = args.Term
-	rf.Log("处理RequestVote中存在更大Term，更新currentTerm为[%d]\n", args.Term)
+	rf.Info("处理RequestVote中存在更大Term，更新currentTerm为[%d]\n", args.Term)
 	rf.serverState = Follower
 	rf.timeoutInterval = 0
 }
@@ -239,20 +237,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	rf.Log("处理AppendEntries: %+v\n", args)
+	rf.Info("处理AppendEntries: %+v\n", args)
 	reply.Term = rf.currentTerm
 	if rf.currentTerm > args.Term {
 		return
 	}
 
 	rf.currentTerm = args.Term
-	rf.Log("更新currentTerm为[%d]\n", rf.currentTerm)
+	rf.Info("更新currentTerm为[%d]\n", rf.currentTerm)
 	rf.becomeFollower()
 
 	if args.PrevLogIndex > len(rf.logEntries)-1 {
 		reply.ConflictIndex = len(rf.logEntries) - 1
 		reply.ConflictTerm = rf.logEntries[reply.ConflictIndex].Term
-		rf.Log("PrevLogIndex位置缺少日志\n")
+		rf.Info("PrevLogIndex位置缺少日志\n")
 		return
 	}
 	if rf.logEntries[args.PrevLogIndex].Term != args.PrevLogTerm {
@@ -263,7 +261,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				break
 			}
 		}
-		rf.Log("PrevLogIndex Term冲突\n")
+		rf.Info("PrevLogIndex Term冲突\n")
 		return
 	}
 
@@ -333,7 +331,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := rf.serverState == Leader
 
 	if isLeader {
-		rf.Log("-------------------接收到command: %+v", command)
+		rf.Warn("-------------------接收到command: %+v", command)
 		rf.logEntries = append(rf.logEntries, LogEntry{
 			Term:    rf.currentTerm,
 			Command: command,
@@ -359,7 +357,7 @@ func (rf *Raft) Kill() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	// Your code here, if desired.
-	log.Println("--------------------------------------", rf.me, "kill")
+	rf.Warn("--------------------------------------kill %d", rf.me)
 }
 
 func (rf *Raft) killed() bool {
@@ -384,7 +382,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.applyMsg = applyCh

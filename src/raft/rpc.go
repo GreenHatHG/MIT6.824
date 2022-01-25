@@ -34,14 +34,14 @@ func (rf *Raft) requestVoteRPC(currentTerm int) (bool, int) {
 			reply := &RequestVoteReply{}
 
 			t := time.Now()
-			rf.Log("开始向[%d]索要投票\n", server)
+			rf.Info("开始向[%d]索要投票\n", server)
 
 			ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
-			rf.Log("向[%d]索要投票的结果，发送时间: %v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
+			rf.Info("向[%d]索要投票的结果，发送时间: %v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
 			if !ok {
 				return
 			}
@@ -107,11 +107,11 @@ func (rf *Raft) appendEntriesRPC() int {
 			rf.mu.Unlock()
 
 			t := time.Now()
-			rf.Log("开始向[%d]发送心跳\n", i)
+			rf.Info("开始向[%d]发送心跳\n", i)
 			ok := rf.peers[i].Call("Raft.AppendEntries", args, reply)
 
 			rf.mu.Lock()
-			rf.Log("向[%d]发送appendEntriesRPC返回，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", i, t, ok, args, reply)
+			rf.Info("向[%d]发送appendEntriesRPC返回，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", i, t, ok, args, reply)
 			rf.mu.Unlock()
 
 			if !ok {

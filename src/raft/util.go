@@ -3,22 +3,29 @@ package raft
 import (
 	"fmt"
 	"log"
+	"os"
 )
 
-// Debugging
-//const Debug = 0
-//
-//func DPrintf(format string, a ...interface{}) {
-//	if Debug > 0 {
-//		log.Printf(format, a...)
-//	}
-//}
+var (
+	Info *log.Logger
+	Warn *log.Logger
+)
+
+func init() {
+	Info = log.New(os.Stdout, "Info:", log.LstdFlags|log.Lmicroseconds)
+	Warn = log.New(os.Stderr, "Warn:", log.LstdFlags|log.Lmicroseconds)
+}
 
 const Prefix = "【%d】 term:%3d state:%s | "
 
-func (rf *Raft) Log(format string, a ...interface{}) {
+func (rf *Raft) Info(format string, a ...interface{}) {
 	prefix := fmt.Sprintf(Prefix, rf.me, rf.currentTerm, StateString(rf.serverState))
-	log.Printf(prefix+format, a...)
+	Info.Printf(prefix+format, a...)
+}
+
+func (rf *Raft) Warn(format string, a ...interface{}) {
+	prefix := fmt.Sprintf(Prefix, rf.me, rf.currentTerm, StateString(rf.serverState))
+	Warn.Printf(prefix+format, a...)
 }
 
 func (rf *Raft) isMajority(success int) bool {
@@ -30,7 +37,7 @@ func (rf *Raft) applyLogs() {
 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 		msg := ApplyMsg{true, rf.logEntries[i].Command, i}
 		rf.applyMsg <- msg
-		rf.Log("apply msg: %+v\n", msg)
+		rf.Info("apply msg: %+v\n", msg)
 	}
 	rf.lastApplied = rf.commitIndex
 }
