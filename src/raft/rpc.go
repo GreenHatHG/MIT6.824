@@ -1,29 +1,12 @@
 package raft
 
 import (
-	"math"
-	"sync"
 	"time"
 )
 
-type requestVoteRes struct {
-	majority bool
-	maxTerm  int
-}
-
-func (rf *Raft) requestVoteRPC(currentTerm int) (bool, int) {
+func (rf *Raft) requestVoteRPC() {
 	//本身自投一票
-	success, maxTerm := 1, 0
-
-	resC := make(chan requestVoteRes, len(rf.peers)-1)
-	rf.mu.Lock()
-	args := &RequestVoteArgs{
-		Term:         currentTerm,
-		CandidateId:  rf.me,
-		LastLogIndex: len(rf.logEntries) - 1,
-		LastLogTerm:  rf.logEntries[len(rf.logEntries)-1].Term,
-	}
-	rf.mu.Unlock()
+	success := 1
 
 	for server := range rf.peers {
 		server := server
@@ -33,8 +16,22 @@ func (rf *Raft) requestVoteRPC(currentTerm int) (bool, int) {
 		go func() {
 			reply := &RequestVoteReply{}
 
+			rf.mu.Lock()
+			if rf.serverState != Candidate {
+				rf.mu.Unlock()
+				return
+			}
+
 			t := time.Now()
+			currentTerm := rf.currentTerm
+			args := &RequestVoteArgs{
+				Term:         currentTerm,
+				CandidateId:  rf.me,
+				LastLogIndex: len(rf.logEntries) - 1,
+				LastLogTerm:  rf.logEntries[len(rf.logEntries)-1].Term,
+			}
 			rf.Info("开始向[%d]索要投票\n", server)
+			rf.mu.Unlock()
 
 			ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 
@@ -45,32 +42,30 @@ func (rf *Raft) requestVoteRPC(currentTerm int) (bool, int) {
 			if !ok {
 				return
 			}
-
+			if rf.serverState != Candidate {
+				rf.Info("不是Candidate，退出选举，当前状态为[%d]\n", rf.serverState)
+				return
+			}
+			if reply.Term > rf.currentTerm {
+				rf.currentTerm = reply.Term
+				rf.becomeFollower(false, true)
+				rf.Info("选举失败，存在更大Term，rf.currentTerm更新为[%d]\n", reply.Term)
+				return
+			}
 			if reply.VoteGranted {
 				success++
 			}
-			maxTerm = int(math.Max(float64(maxTerm), float64(reply.Term)))
 			if rf.isMajority(success) {
-				resC <- requestVoteRes{true, maxTerm}
+				rf.Info("-----------------------选举成功\n")
+				rf.becomeLeader()
 			}
 		}()
 	}
-	res := <-resC
-	return res.majority, res.maxTerm
 }
 
-func (rf *Raft) appendEntriesRPC() int {
-	term := make(chan int, len(rf.peers)-1)
-	wg := sync.WaitGroup{}
-	wg.Add(len(rf.peers) - 1)
+func (rf *Raft) appendEntriesRPC() {
 	numCommit := 1
 	hasCommitted := false
-
-	go func() {
-		//没有最大的term大于leader的，返回-1，不会被任何处理
-		wg.Wait()
-		term <- -1
-	}()
 
 	rf.mu.Lock()
 	currentTerm := rf.currentTerm
@@ -83,7 +78,6 @@ func (rf *Raft) appendEntriesRPC() int {
 		}
 
 		go func() {
-			defer wg.Done()
 			rf.mu.Lock()
 			if rf.serverState != Leader {
 				rf.mu.Unlock()
@@ -102,39 +96,43 @@ func (rf *Raft) appendEntriesRPC() int {
 			reply := &AppendEntriesReply{}
 			//要发送给follower的log
 			if lastLogIndex >= nextIndex {
-				args.LogEntries = rf.logEntries[nextIndex:]
+				bufCopy := make([]LogEntry, lastLogIndex+1-nextIndex)
+				copy(bufCopy, rf.logEntries[nextIndex:])
+				args.LogEntries = bufCopy
 			}
-			rf.mu.Unlock()
-
 			t := time.Now()
 			rf.Info("开始向[%d]发送心跳\n", i)
+			rf.mu.Unlock()
+
 			ok := rf.peers[i].Call("Raft.AppendEntries", args, reply)
 
 			rf.mu.Lock()
-			rf.Info("向[%d]发送appendEntriesRPC返回，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", i, t, ok, args, reply)
-			rf.mu.Unlock()
-
-			if !ok {
-				return
-			}
-			//leader过期
-			if reply.Term > currentTerm {
-				term <- reply.Term
-				return
-			}
-
-			rf.mu.Lock()
 			defer rf.mu.Unlock()
-			if rf.serverState != Leader {
+			rf.Info("向[%d]发送appendEntriesRPC返回，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", i, t, ok, args, reply)
+
+			if !ok || rf.serverState != Leader {
 				return
 			}
+			if reply.Term > rf.currentTerm {
+				rf.currentTerm = reply.Term
+				rf.becomeFollower(false, true)
+				rf.Info("心跳结束后转变为follower，存在更大Term，rf.currentTerm更新为[%d]\n", reply.Term)
+				return
+			}
+			if len(args.LogEntries) == 0 {
+				return
+			}
+
 			//发送日志成功
 			if reply.Success {
 				numCommit++
 				if !hasCommitted && numCommit > len(rf.peers)/2 {
-					hasCommitted = true
-					rf.commitIndex = prevLogIndex + len(args.LogEntries)
-					rf.applyLogs()
+					//leader保证提交current term的log时候才能顺带把之前的log提交了
+					if rf.currentTerm == args.LogEntries[len(args.LogEntries)-1].Term {
+						hasCommitted = true
+						rf.commitIndex = prevLogIndex + len(args.LogEntries)
+						rf.applyLogs()
+					}
 				}
 				rf.nextIndex[i] = prevLogIndex + len(args.LogEntries) + 1
 				rf.matchIndex[i] = prevLogIndex + len(args.LogEntries)
@@ -144,11 +142,10 @@ func (rf *Raft) appendEntriesRPC() int {
 			rf.nextIndex[i] = 1
 			for j := reply.ConflictIndex; j > 0; j-- {
 				if rf.logEntries[j].Term == reply.ConflictTerm {
-					rf.nextIndex[j] = j + 1
+					rf.nextIndex[i] = j + 1
 					break
 				}
 			}
 		}()
 	}
-	return <-term
 }

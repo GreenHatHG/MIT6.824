@@ -134,7 +134,7 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	// Your code here (2C).
-	// Example:
+	// EXAMPLE:
 	// r := bytes.NewBuffer(data)
 	// d := labgob.NewDecoder(r)
 	// var xxx
@@ -209,28 +209,24 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	rf.Info("处理RequestVote: %+v\n", args)
 	reply.Term = rf.currentTerm
-
 	if rf.currentTerm > args.Term {
 		return
 	}
-	if rf.currentTerm == args.Term && rf.votedFor != -1 {
-		return
+	if rf.currentTerm < args.Term {
+		rf.becomeFollower(false, true)
+		rf.currentTerm = args.Term
+		rf.Info("处理RequestVote中存在更大Term，更新currentTerm为[%d]\n", args.Term)
 	}
 
 	//确保日志至少和接收者一样新
-	if args.LastLogTerm < rf.logEntries[len(rf.logEntries)-1].Term {
-		return
-	}
-	if args.LastLogTerm == rf.logEntries[len(rf.logEntries)-1].Term && args.LastLogIndex < len(rf.logEntries)-1 {
-		return
-	}
-	rf.votedFor = args.CandidateId
-	reply.VoteGranted = true
+	lastTerm := rf.logEntries[len(rf.logEntries)-1].Term
+	logUpToDate := args.LastLogTerm > lastTerm || (args.LastLogTerm == lastTerm && args.LastLogIndex >= len(rf.logEntries)-1)
 
-	rf.currentTerm = args.Term
-	rf.Info("处理RequestVote中存在更大Term，更新currentTerm为[%d]\n", args.Term)
-	rf.serverState = Follower
-	rf.timeoutInterval = 0
+	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && logUpToDate {
+		rf.votedFor = args.CandidateId
+		rf.timeoutInterval = 0
+		reply.VoteGranted = true
+	}
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -242,10 +238,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if rf.currentTerm > args.Term {
 		return
 	}
-
-	rf.currentTerm = args.Term
-	rf.Info("更新currentTerm为[%d]\n", rf.currentTerm)
-	rf.becomeFollower()
+	if rf.currentTerm < args.Term {
+		rf.currentTerm = args.Term
+		reply.Term = rf.currentTerm
+		rf.votedFor = -1
+		rf.Info("处理AppendEntries中存在更大Term，更新currentTerm为[%d]\n", args.Term)
+	}
+	rf.becomeFollower(true, false)
 
 	if args.PrevLogIndex > len(rf.logEntries)-1 {
 		reply.ConflictIndex = len(rf.logEntries) - 1
@@ -266,8 +265,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	rf.logEntries = rf.logEntries[:args.PrevLogIndex+1]
-	//entries := make([]LogEntry, len(args.LogEntries))
-	//copy(entries, args.LogEntries)
 	rf.logEntries = append(rf.logEntries, args.LogEntries...)
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = minInt(args.LeaderCommit, len(rf.logEntries)-1)
@@ -357,7 +354,9 @@ func (rf *Raft) Kill() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	// Your code here, if desired.
-	rf.Warn("--------------------------------------kill %d", rf.me)
+	if Debug {
+		rf.Warn("--------------------------------------kill %d", rf.me)
+	}
 }
 
 func (rf *Raft) killed() bool {
@@ -391,7 +390,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	//index从1开始
 	rf.logEntries = append(rf.logEntries, LogEntry{})
 
-	rf.becomeFollower()
+	rf.becomeFollower(true, true)
 	go rf.ticker()
 
 	// initialize from state persisted before a crash

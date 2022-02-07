@@ -13,19 +13,24 @@ var (
 
 func init() {
 	Info = log.New(os.Stdout, "Info:", log.LstdFlags|log.Lmicroseconds)
-	Warn = log.New(os.Stderr, "Warn:", log.LstdFlags|log.Lmicroseconds)
+	Warn = log.New(os.Stdout, "Warn:", log.LstdFlags|log.Lmicroseconds)
 }
 
 const Prefix = "【%d】 term:%3d state:%s | "
 
 func (rf *Raft) Info(format string, a ...interface{}) {
-	prefix := fmt.Sprintf(Prefix, rf.me, rf.currentTerm, StateString(rf.serverState))
-	Info.Printf(prefix+format, a...)
+	if Debug {
+		prefix := fmt.Sprintf(Prefix, rf.me, rf.currentTerm, StateString(rf.serverState))
+		Info.Printf(prefix+format, a...)
+	}
+
 }
 
 func (rf *Raft) Warn(format string, a ...interface{}) {
-	prefix := fmt.Sprintf(Prefix, rf.me, rf.currentTerm, StateString(rf.serverState))
-	Warn.Printf(prefix+format, a...)
+	if Debug {
+		prefix := fmt.Sprintf(Prefix, rf.me, rf.currentTerm, StateString(rf.serverState))
+		Warn.Printf(prefix+format, a...)
+	}
 }
 
 func (rf *Raft) isMajority(success int) bool {
