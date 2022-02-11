@@ -49,6 +49,7 @@ func (rf *Raft) requestVoteRPC() {
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
 				rf.becomeFollower(false, true)
+				rf.persist()
 				rf.Info("选举失败，存在更大Term，rf.currentTerm更新为[%d]\n", reply.Term)
 				return
 			}
@@ -116,6 +117,7 @@ func (rf *Raft) appendEntriesRPC() {
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
 				rf.becomeFollower(false, true)
+				rf.persist()
 				rf.Info("心跳结束后转变为follower，存在更大Term，rf.currentTerm更新为[%d]\n", reply.Term)
 				return
 			}

@@ -7,6 +7,7 @@ func (rf *Raft) becomeFollower(resetTimeout, resetVotedFor bool) {
 	}
 	if resetVotedFor {
 		rf.votedFor = -1
+		rf.persist()
 	}
 	rf.tick = rf.electTicker
 }
@@ -26,5 +27,6 @@ func (rf *Raft) becomeCandidate() {
 	rf.currentTerm++
 	rf.votedFor = rf.me
 	rf.timeoutInterval = 0
+	rf.persist()
 	rf.Warn("---------------转变为candidate\n")
 }

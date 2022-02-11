@@ -7,13 +7,15 @@ import (
 )
 
 var (
-	Info *log.Logger
-	Warn *log.Logger
+	Info  *log.Logger
+	Warn  *log.Logger
+	Error *log.Logger
 )
 
 func init() {
 	Info = log.New(os.Stdout, "Info:", log.LstdFlags|log.Lmicroseconds)
 	Warn = log.New(os.Stdout, "Warn:", log.LstdFlags|log.Lmicroseconds)
+	Error = log.New(os.Stdout, "Error:", log.LstdFlags|log.Lmicroseconds)
 }
 
 const Prefix = "【%d】 term:%3d state:%s | "
@@ -23,13 +25,19 @@ func (rf *Raft) Info(format string, a ...interface{}) {
 		prefix := fmt.Sprintf(Prefix, rf.me, rf.currentTerm, StateString(rf.serverState))
 		Info.Printf(prefix+format, a...)
 	}
-
 }
 
 func (rf *Raft) Warn(format string, a ...interface{}) {
 	if Debug {
 		prefix := fmt.Sprintf(Prefix, rf.me, rf.currentTerm, StateString(rf.serverState))
 		Warn.Printf(prefix+format, a...)
+	}
+}
+
+func (rf *Raft) Error(format string, a ...interface{}) {
+	if Debug {
+		prefix := fmt.Sprintf(Prefix, rf.me, rf.currentTerm, StateString(rf.serverState))
+		Error.Printf(prefix+format, a...)
 	}
 }
 

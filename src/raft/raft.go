@@ -18,13 +18,14 @@ package raft
 //
 
 import (
+	"bytes"
 	"sync"
 )
 import "sync/atomic"
 import "../labrpc"
 
 // import "bytes"
-// import "../labgob"
+import "../labgob"
 
 // ApplyMsg
 // as each Raft peer becomes aware that successive raftLog entries are
@@ -117,13 +118,23 @@ func (rf *Raft) GetState() (int, bool) {
 //
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	currentTerm := rf.currentTerm
+	votedFor := rf.votedFor
+	logEntries := rf.logEntries
+
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	if err := e.Encode(currentTerm); err != nil {
+		rf.Error("persist encode error: %+v\n", err)
+	}
+	if err := e.Encode(votedFor); err != nil {
+		rf.Error("persist encode error: %+v\n", err)
+	}
+	if err := e.Encode(logEntries); err != nil {
+		rf.Error("persist encode error: %+v\n", err)
+	}
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -134,18 +145,29 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	// Your code here (2C).
-	// EXAMPLE:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm int
+	var votedFor int
+	var logEntries []LogEntry
+
+	if err := d.Decode(&currentTerm); err != nil {
+		rf.Error("readPersist decode error: %+v\n", err)
+	}
+	if err := d.Decode(&votedFor); err != nil {
+		rf.Error("readPersist decode error: %+v\n", err)
+	}
+	if err := d.Decode(&logEntries); err != nil {
+		rf.Error("readPersist decode error: %+v\n", err)
+	}
+
+	rf.mu.Lock()
+	rf.currentTerm = currentTerm
+	rf.votedFor = votedFor
+	if logEntries != nil {
+		rf.logEntries = logEntries
+	}
+	rf.mu.Unlock()
 }
 
 // RequestVoteArgs
@@ -215,6 +237,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.currentTerm < args.Term {
 		rf.becomeFollower(false, true)
 		rf.currentTerm = args.Term
+		rf.persist()
 		rf.Info("处理RequestVote中存在更大Term，更新currentTerm为[%d]\n", args.Term)
 	}
 
@@ -226,6 +249,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = args.CandidateId
 		rf.timeoutInterval = 0
 		reply.VoteGranted = true
+		rf.persist()
 	}
 }
 
@@ -242,6 +266,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.currentTerm = args.Term
 		reply.Term = rf.currentTerm
 		rf.votedFor = -1
+		rf.persist()
 		rf.Info("处理AppendEntries中存在更大Term，更新currentTerm为[%d]\n", args.Term)
 	}
 	rf.becomeFollower(true, false)
@@ -266,6 +291,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.logEntries = rf.logEntries[:args.PrevLogIndex+1]
 	rf.logEntries = append(rf.logEntries, args.LogEntries...)
+	rf.persist()
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = minInt(args.LeaderCommit, len(rf.logEntries)-1)
 		rf.applyLogs()
@@ -333,6 +359,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Term:    rf.currentTerm,
 			Command: command,
 		})
+		rf.persist()
 		rf.nextIndex[rf.me]++
 	}
 
@@ -382,19 +409,22 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 
-	// Your initialization code here (2A, 2B, 2C).
-	rf.applyMsg = applyCh
-	rf.nextIndex = make([]int, len(peers))
-	rf.matchIndex = make([]int, len(peers))
+	// 如果没有持久化数据，readPersist不会执行任何逻辑，那么votedFor应该设置为-1
+	rf.votedFor = -1
 	rf.logEntries = make([]LogEntry, 0)
 	//index从1开始
 	rf.logEntries = append(rf.logEntries, LogEntry{})
 
-	rf.becomeFollower(true, true)
-	go rf.ticker()
-
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+
+	// Your initialization code here (2A, 2B, 2C).
+	rf.applyMsg = applyCh
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
+
+	rf.becomeFollower(true, false)
+	go rf.ticker()
 
 	return rf
 }
