@@ -19,6 +19,7 @@ func (rf *Raft) becomeLeader() {
 	for i := range rf.peers {
 		rf.nextIndex[i] = len(rf.logEntries)
 	}
+	rf.matchIndex[rf.me] = rf.getLastLogIndex()
 	rf.Warn("---------------转变为leader\n")
 }
 

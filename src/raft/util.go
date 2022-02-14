@@ -55,6 +55,27 @@ func (rf *Raft) applyLogs() {
 	rf.lastApplied = rf.commitIndex
 }
 
+func (rf *Raft) getLastLogIndex() int {
+	return len(rf.logEntries) - 1
+}
+
+func (rf *Raft) checkMatchIndexMajority() {
+	for i := rf.commitIndex + 1; i <= rf.getLastLogIndex(); i++ {
+		matchIndexNum := 0
+		for peer := range rf.peers {
+			if rf.matchIndex[peer] >= i {
+				matchIndexNum++
+			}
+			if !rf.isMajority(matchIndexNum) || rf.logEntries[i].Term != rf.currentTerm {
+				continue
+			}
+			rf.commitIndex = i
+			rf.applyLogs()
+			break
+		}
+	}
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a

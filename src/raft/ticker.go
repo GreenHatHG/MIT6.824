@@ -4,7 +4,7 @@ import "time"
 
 func (rf *Raft) ticker() {
 	for !rf.killed() {
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 		rf.mu.Lock()
 		rf.timeoutInterval++
 		go rf.tick()
@@ -22,19 +22,18 @@ func (rf *Raft) electTicker() {
 	}
 	rf.Info("选举定时器到时，转变为Candidate，发起选举\n")
 	rf.becomeCandidate()
-	rf.mu.Unlock()
-
 	rf.requestVoteRPC()
+	rf.mu.Unlock()
 }
 
 func (rf *Raft) heartBeatTicker() {
 	rf.mu.Lock()
 	//rf.raftLog.Println("heartBeatTicker, 当前timeoutInterval:", rf.timeoutInterval)
-	if rf.timeoutInterval < 2 || rf.serverState != Leader {
+	if rf.timeoutInterval < 10 || rf.serverState != Leader {
 		rf.mu.Unlock()
 		return
 	}
 	rf.timeoutInterval = 0
-	rf.mu.Unlock()
 	rf.appendEntriesRPC()
+	rf.mu.Unlock()
 }

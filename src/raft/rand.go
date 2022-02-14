@@ -11,8 +11,8 @@ var (
 	mu sync.Mutex
 )
 
-const min = 6
-const max = 12
+const min = 35
+const max = 65
 
 func (rf *Raft) getRandomInterval() int {
 	mu.Lock()

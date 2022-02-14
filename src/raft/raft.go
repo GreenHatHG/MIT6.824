@@ -271,7 +271,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	rf.becomeFollower(true, false)
 
-	if args.PrevLogIndex > len(rf.logEntries)-1 {
+	rfLastLogIndex := rf.getLastLogIndex()
+	if args.PrevLogIndex > rfLastLogIndex {
 		reply.ConflictIndex = len(rf.logEntries) - 1
 		reply.ConflictTerm = rf.logEntries[reply.ConflictIndex].Term
 		rf.Info("PrevLogIndex位置缺少日志\n")
@@ -289,9 +290,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	rf.logEntries = rf.logEntries[:args.PrevLogIndex+1]
-	rf.logEntries = append(rf.logEntries, args.LogEntries...)
-	rf.persist()
+	// 不能直接删除，有冲突才能删除
+	i := 0
+	for ; i < len(args.LogEntries); i++ {
+		rfLogIndex := args.PrevLogIndex + 1 + i
+		if rfLogIndex > rfLastLogIndex {
+			break
+		}
+		if rf.logEntries[rfLogIndex].Term != args.LogEntries[i].Term {
+			rf.logEntries = rf.logEntries[:rfLogIndex]
+			rf.persist()
+			break
+		}
+	}
+	// 删除冲突的日志后再添加log
+	if len(args.LogEntries) > 0 {
+		rf.logEntries = append(rf.logEntries, args.LogEntries[i:]...)
+		rf.persist()
+	}
+
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = minInt(args.LeaderCommit, len(rf.logEntries)-1)
 		rf.applyLogs()
@@ -360,6 +377,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		})
 		rf.persist()
+		rf.matchIndex[rf.me]++
 		rf.nextIndex[rf.me]++
 	}
 
