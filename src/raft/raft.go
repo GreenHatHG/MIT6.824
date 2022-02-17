@@ -96,8 +96,8 @@ type Raft struct {
 	nextIndex []int
 	//对于每个server，已知要在server上复制的最新log entry的index
 	matchIndex  []int
-	applyMsg    chan ApplyMsg
 	lastApplied int
+	applyMsg    chan ApplyMsg
 }
 
 // GetState return currentTerm and whether this server
@@ -273,16 +273,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rfLastLogIndex := rf.getLastLogIndex()
 	if args.PrevLogIndex > rfLastLogIndex {
-		reply.ConflictIndex = len(rf.logEntries) - 1
-		reply.ConflictTerm = rf.logEntries[reply.ConflictIndex].Term
+		reply.ConflictIndex = len(rf.logEntries)
+		reply.ConflictTerm = -1
 		rf.Info("PrevLogIndex位置缺少日志\n")
 		return
 	}
 	if rf.logEntries[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.ConflictTerm = rf.logEntries[args.PrevLogIndex].Term
-		for i := args.PrevLogIndex; i > 0; i-- {
-			reply.ConflictIndex = i
-			if rf.logEntries[i].Term != reply.ConflictTerm {
+		for i, entry := range rf.logEntries {
+			if entry.Term == reply.ConflictTerm {
+				reply.ConflictIndex = i
 				break
 			}
 		}
@@ -311,7 +311,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = minInt(args.LeaderCommit, len(rf.logEntries)-1)
-		rf.applyLogs()
 	}
 	reply.Success = true
 }
@@ -443,6 +442,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.becomeFollower(true, false)
 	go rf.ticker()
+	go rf.checkCommitLoop()
 
 	return rf
 }

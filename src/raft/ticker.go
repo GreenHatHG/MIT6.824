@@ -4,7 +4,7 @@ import "time"
 
 func (rf *Raft) ticker() {
 	for !rf.killed() {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 		rf.mu.Lock()
 		rf.timeoutInterval++
 		go rf.tick()
@@ -28,12 +28,37 @@ func (rf *Raft) electTicker() {
 
 func (rf *Raft) heartBeatTicker() {
 	rf.mu.Lock()
-	//rf.raftLog.Println("heartBeatTicker, 当前timeoutInterval:", rf.timeoutInterval)
-	if rf.timeoutInterval < 10 || rf.serverState != Leader {
+	if rf.timeoutInterval < 4 || rf.serverState != Leader {
 		rf.mu.Unlock()
 		return
 	}
 	rf.timeoutInterval = 0
 	rf.appendEntriesRPC()
 	rf.mu.Unlock()
+}
+
+func (rf *Raft) checkCommitLoop() {
+	for !rf.killed() {
+		time.Sleep(10 * time.Millisecond)
+
+		rf.mu.Lock()
+		if rf.lastApplied == rf.commitIndex {
+			rf.mu.Unlock()
+			continue
+		}
+		commitEntries := make([]ApplyMsg, 0, rf.commitIndex-rf.lastApplied)
+		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+			msg := ApplyMsg{true, rf.logEntries[i].Command, i}
+			commitEntries = append(commitEntries, msg)
+		}
+		rf.mu.Unlock()
+
+		for _, msg := range commitEntries {
+			rf.applyMsg <- msg
+			rf.mu.Lock()
+			rf.lastApplied = msg.CommandIndex
+			rf.mu.Unlock()
+		}
+		rf.Info("apply msg: %+v\n", commitEntries)
+	}
 }

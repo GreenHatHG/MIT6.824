@@ -1,3 +1,3 @@
 package raft
 
-const Debug = true
+const Debug = false

@@ -46,34 +46,8 @@ func (rf *Raft) isMajority(success int) bool {
 	return majority
 }
 
-func (rf *Raft) applyLogs() {
-	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-		msg := ApplyMsg{true, rf.logEntries[i].Command, i}
-		rf.applyMsg <- msg
-		rf.Info("apply msg: %+v\n", msg)
-	}
-	rf.lastApplied = rf.commitIndex
-}
-
 func (rf *Raft) getLastLogIndex() int {
 	return len(rf.logEntries) - 1
-}
-
-func (rf *Raft) checkMatchIndexMajority() {
-	for i := rf.commitIndex + 1; i <= rf.getLastLogIndex(); i++ {
-		matchIndexNum := 0
-		for peer := range rf.peers {
-			if rf.matchIndex[peer] >= i {
-				matchIndexNum++
-			}
-			if !rf.isMajority(matchIndexNum) || rf.logEntries[i].Term != rf.currentTerm {
-				continue
-			}
-			rf.commitIndex = i
-			rf.applyLogs()
-			break
-		}
-	}
 }
 
 func minInt(a, b int) int {
@@ -81,4 +55,23 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (rf *Raft) leaderMaybeCommit() {
+	for i := rf.commitIndex + 1; i <= rf.getLastLogIndex(); i++ {
+		if rf.logEntries[i].Term != rf.currentTerm {
+			continue
+		}
+
+		matchIndexNum := 0
+		for peer := range rf.peers {
+			if rf.matchIndex[peer] >= i {
+				matchIndexNum++
+			}
+		}
+		if !rf.isMajority(matchIndexNum) {
+			return
+		}
+		rf.commitIndex = i
+	}
 }

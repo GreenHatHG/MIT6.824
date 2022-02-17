@@ -28,14 +28,11 @@ func (rf *Raft) requestVoteRPC() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
+			if !ok || rf.serverState != Candidate || rf.currentTerm != args.Term {
+				return
+			}
 			rf.Info("向[%d]索要投票的结果，发送时间: %v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
-			if !ok {
-				return
-			}
-			if rf.serverState != Candidate {
-				rf.Info("不是Candidate，退出选举，当前状态为[%s]\n", StateString(rf.serverState))
-				return
-			}
+
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
 				rf.becomeFollower(false, true)
@@ -55,14 +52,14 @@ func (rf *Raft) requestVoteRPC() {
 }
 
 func (rf *Raft) appendEntriesRPC() {
-	lastLogIndex := rf.getLastLogIndex()
-
-	for i := range rf.peers {
-		i := i
-		if i == rf.me {
+	for peer := range rf.peers {
+		peer := peer
+		if peer == rf.me {
 			continue
 		}
-		nextIndex := rf.nextIndex[i]
+
+		lastLogIndex := rf.getLastLogIndex()
+		nextIndex := rf.nextIndex[peer]
 		prevLogIndex := nextIndex - 1
 		args := &AppendEntriesArgs{
 			Term:         rf.currentTerm,
@@ -81,15 +78,16 @@ func (rf *Raft) appendEntriesRPC() {
 			reply := &AppendEntriesReply{}
 			t := time.Now()
 
-			ok := rf.peers[i].Call("Raft.AppendEntries", args, reply)
+			ok := rf.peers[peer].Call("Raft.AppendEntries", args, reply)
 
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
-			rf.Info("[%d] appendEntriesRPC返回，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", i, t, ok, args, reply)
 
-			if !ok || rf.serverState != Leader {
+			if !ok || rf.serverState != Leader || rf.currentTerm != args.Term {
 				return
 			}
+			rf.Info("[%d] appendEntriesRPC返回，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", peer, t, ok, args, reply)
+
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
 				rf.becomeFollower(false, true)
@@ -100,19 +98,28 @@ func (rf *Raft) appendEntriesRPC() {
 
 			//发送日志成功
 			if reply.Success && len(args.LogEntries) != 0 {
-				rf.nextIndex[i] = prevLogIndex + len(args.LogEntries) + 1
-				rf.matchIndex[i] = prevLogIndex + len(args.LogEntries)
-				rf.checkMatchIndexMajority()
+				rf.nextIndex[peer] = prevLogIndex + len(args.LogEntries) + 1
+				rf.matchIndex[peer] = prevLogIndex + len(args.LogEntries)
+				rf.leaderMaybeCommit()
 				return
 			}
 			if !reply.Success {
-				//如果leader没有conflictTerm的日志，那么重新发送所有日志
-				rf.nextIndex[i] = 1
-				for j := reply.ConflictIndex; j > 0; j-- {
-					if rf.logEntries[j].Term == reply.ConflictTerm {
-						rf.nextIndex[i] = j + 1
-						break
+				if reply.ConflictTerm == -1 {
+					rf.nextIndex[peer] = reply.ConflictIndex
+					return
+				}
+
+				newNextIndex := -1
+				for i, entry := range rf.logEntries {
+					if entry.Term == reply.ConflictTerm {
+						newNextIndex = i
 					}
+				}
+				//找到最后一个term为conflictTerm的log index
+				if newNextIndex != -1 {
+					rf.nextIndex[peer] = newNextIndex
+				} else {
+					rf.nextIndex[peer] = reply.ConflictIndex
 				}
 			}
 		}()
