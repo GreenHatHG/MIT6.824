@@ -28,7 +28,7 @@ func (rf *Raft) electTicker() {
 
 func (rf *Raft) heartBeatTicker() {
 	rf.mu.Lock()
-	if rf.timeoutInterval < 4 || rf.serverState != Leader {
+	if rf.timeoutInterval < 2 || rf.serverState != Leader {
 		rf.mu.Unlock()
 		return
 	}
