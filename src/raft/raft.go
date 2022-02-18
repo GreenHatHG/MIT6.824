@@ -373,8 +373,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		})
 		rf.persist()
-		rf.matchIndex[rf.me]++
-		rf.nextIndex[rf.me]++
+		rf.matchIndex[rf.me] = rf.getLastLogIndex()
 	}
 
 	return len(rf.logEntries) - 1, rf.currentTerm, isLeader

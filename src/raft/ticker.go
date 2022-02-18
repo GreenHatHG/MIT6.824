@@ -15,7 +15,6 @@ func (rf *Raft) ticker() {
 func (rf *Raft) electTicker() {
 	rf.mu.Lock()
 	interval := rf.getRandomInterval()
-	//rf.raftLog.Println("electTicker, 获取的interval:", interval, "当前timeoutInterval:", rf.timeoutInterval)
 	if rf.timeoutInterval < interval || rf.serverState == Leader {
 		rf.mu.Unlock()
 		return
@@ -39,7 +38,7 @@ func (rf *Raft) heartBeatTicker() {
 
 func (rf *Raft) checkCommitLoop() {
 	for !rf.killed() {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(1 * time.Millisecond)
 
 		rf.mu.Lock()
 		if rf.lastApplied == rf.commitIndex {
