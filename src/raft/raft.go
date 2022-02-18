@@ -235,8 +235,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	if rf.currentTerm < args.Term {
-		rf.becomeFollower(false, true)
+		rf.becomeFollower(true, true)
 		rf.currentTerm = args.Term
+		reply.Term = rf.currentTerm
 		rf.persist()
 		rf.Info("处理RequestVote中存在更大Term，更新currentTerm为[%d]\n", args.Term)
 	}
