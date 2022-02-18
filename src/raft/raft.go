@@ -235,11 +235,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	if rf.currentTerm < args.Term {
-		rf.becomeFollower(true, true)
+		rf.becomeFollower(false, true)
 		rf.currentTerm = args.Term
 		reply.Term = rf.currentTerm
-		rf.persist()
-		rf.Info("处理RequestVote中存在更大Term，更新currentTerm为[%d]\n", args.Term)
 	}
 
 	//确保日志至少和接收者一样新
@@ -264,11 +262,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	if rf.currentTerm < args.Term {
+		rf.becomeFollower(false, true)
 		rf.currentTerm = args.Term
 		reply.Term = rf.currentTerm
-		rf.votedFor = -1
-		rf.persist()
-		rf.Info("处理AppendEntries中存在更大Term，更新currentTerm为[%d]\n", args.Term)
 	}
 	rf.becomeFollower(true, false)
 
