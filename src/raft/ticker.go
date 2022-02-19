@@ -6,7 +6,7 @@ func (rf *Raft) ticker() {
 	for !rf.killed() {
 		time.Sleep(25 * time.Millisecond)
 		rf.mu.Lock()
-		rf.timeoutInterval++
+		rf.intervalTimer++
 		go rf.tick()
 		rf.mu.Unlock()
 	}
@@ -14,8 +14,7 @@ func (rf *Raft) ticker() {
 
 func (rf *Raft) electTicker() {
 	rf.mu.Lock()
-	interval := rf.getRandomInterval()
-	if rf.timeoutInterval < interval || rf.serverState == Leader {
+	if rf.intervalTimer < rf.electionInterval || rf.serverState == Leader {
 		rf.mu.Unlock()
 		return
 	}
@@ -27,18 +26,18 @@ func (rf *Raft) electTicker() {
 
 func (rf *Raft) heartBeatTicker() {
 	rf.mu.Lock()
-	if rf.timeoutInterval < 2 || rf.serverState != Leader {
+	if rf.intervalTimer < heartBeat || rf.serverState != Leader {
 		rf.mu.Unlock()
 		return
 	}
-	rf.timeoutInterval = 0
+	rf.resetTimer(true)
 	rf.appendEntriesRPC()
 	rf.mu.Unlock()
 }
 
 func (rf *Raft) checkCommitLoop() {
 	for !rf.killed() {
-		time.Sleep(1 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 
 		rf.mu.Lock()
 		if rf.lastApplied == rf.commitIndex {

@@ -83,11 +83,12 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 	//2A
-	timeoutInterval int
-	tick            func()
-	serverState     ServerState
-	votedFor        int
-	currentTerm     int
+	intervalTimer    int
+	electionInterval int
+	tick             func()
+	serverState      ServerState
+	votedFor         int
+	currentTerm      int
 	//2B
 	logEntries []LogEntry
 	//index of the highest log entry known to be  committed (initialized to 0, increases monotonically)
@@ -235,8 +236,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	if rf.currentTerm < args.Term {
-		rf.becomeFollower(false, true)
-		rf.currentTerm = args.Term
+		rf.becomeFollower(false, true, args.Term)
 		reply.Term = rf.currentTerm
 	}
 
@@ -246,7 +246,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && logUpToDate {
 		rf.votedFor = args.CandidateId
-		rf.timeoutInterval = 0
+		rf.resetTimer(false)
 		reply.VoteGranted = true
 		rf.persist()
 	}
@@ -262,11 +262,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	if rf.currentTerm < args.Term {
-		rf.becomeFollower(false, true)
-		rf.currentTerm = args.Term
+		rf.becomeFollower(false, true, args.Term)
 		reply.Term = rf.currentTerm
 	}
-	rf.becomeFollower(true, false)
+	rf.becomeFollower(true, false, -1)
 
 	rfLastLogIndex := rf.getLastLogIndex()
 	if args.PrevLogIndex > rfLastLogIndex {
@@ -436,7 +435,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 
-	rf.becomeFollower(true, false)
+	rf.becomeFollower(true, false, -1)
 	go rf.ticker()
 	go rf.checkCommitLoop()
 

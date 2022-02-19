@@ -28,14 +28,13 @@ func (rf *Raft) requestVoteRPC() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
+			rf.Info("向[%d]索要投票的结果，发送时间: %v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
 			if !ok || rf.serverState != Candidate || rf.currentTerm != args.Term {
 				return
 			}
-			rf.Info("向[%d]索要投票的结果，发送时间: %v, ok: %t, 请求:%+v, 回复:%+v\n", server, t, ok, args, reply)
 
 			if reply.Term > rf.currentTerm {
-				rf.currentTerm = reply.Term
-				rf.becomeFollower(false, true)
+				rf.becomeFollower(false, true, reply.Term)
 				return
 			}
 			if reply.VoteGranted {
@@ -81,14 +80,13 @@ func (rf *Raft) appendEntriesRPC() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
+			rf.Info("[%d] appendEntriesRPC返回，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", peer, t, ok, args, reply)
 			if !ok || rf.serverState != Leader || rf.currentTerm != args.Term {
 				return
 			}
-			rf.Info("[%d] appendEntriesRPC返回，发送时间：%v, ok: %t, 请求:%+v, 回复:%+v\n", peer, t, ok, args, reply)
 
 			if reply.Term > rf.currentTerm {
-				rf.currentTerm = reply.Term
-				rf.becomeFollower(false, true)
+				rf.becomeFollower(false, true, reply.Term)
 				rf.Info("心跳结束后转变为follower，存在更大Term，rf.currentTerm更新为[%d]\n", reply.Term)
 				return
 			}
