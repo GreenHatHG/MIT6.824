@@ -31,7 +31,7 @@ func (rf *Raft) heartBeatTicker() {
 		return
 	}
 	rf.resetTimer(true)
-	rf.appendEntriesRPC()
+	rf.appendEntriesRPC(false)
 	rf.mu.Unlock()
 }
 

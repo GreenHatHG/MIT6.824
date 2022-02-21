@@ -48,14 +48,14 @@ func (rf *Raft) requestVoteRPC() {
 	}
 }
 
-func (rf *Raft) appendEntriesRPC() {
+func (rf *Raft) appendEntriesRPC(empty bool) {
+	lastLogIndex := rf.getLastLogIndex()
+
 	for peer := range rf.peers {
 		peer := peer
 		if peer == rf.me {
 			continue
 		}
-
-		lastLogIndex := rf.getLastLogIndex()
 		nextIndex := rf.nextIndex[peer]
 		prevLogIndex := nextIndex - 1
 		args := &AppendEntriesArgs{
@@ -64,8 +64,8 @@ func (rf *Raft) appendEntriesRPC() {
 			LeaderCommit: rf.commitIndex,
 			PrevLogTerm:  rf.logEntries[prevLogIndex].Term,
 		}
-		//要发送给follower的log
-		if lastLogIndex >= nextIndex {
+		//要发送给follower的log，如果是empty则不需要带上log，加快rpc速度
+		if !empty && lastLogIndex >= nextIndex {
 			bufCopy := make([]LogEntry, lastLogIndex+1-nextIndex)
 			copy(bufCopy, rf.logEntries[nextIndex:])
 			args.LogEntries = bufCopy

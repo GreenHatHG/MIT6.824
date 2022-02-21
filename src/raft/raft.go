@@ -119,20 +119,10 @@ func (rf *Raft) GetState() (int, bool) {
 //
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	currentTerm := rf.currentTerm
-	votedFor := rf.votedFor
-	logEntries := rf.logEntries
-
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	if err := e.Encode(currentTerm); err != nil {
-		rf.Error("persist encode error: %+v\n", err)
-	}
-	if err := e.Encode(votedFor); err != nil {
-		rf.Error("persist encode error: %+v\n", err)
-	}
-	if err := e.Encode(logEntries); err != nil {
-		rf.Error("persist encode error: %+v\n", err)
+	if e.Encode(rf.currentTerm) != nil || e.Encode(rf.votedFor) != nil || e.Encode(rf.logEntries) != nil {
+		panic("persist encode error")
 	}
 	data := w.Bytes()
 	rf.persister.SaveRaftState(data)
@@ -152,23 +142,13 @@ func (rf *Raft) readPersist(data []byte) {
 	var votedFor int
 	var logEntries []LogEntry
 
-	if err := d.Decode(&currentTerm); err != nil {
-		rf.Error("readPersist decode error: %+v\n", err)
-	}
-	if err := d.Decode(&votedFor); err != nil {
-		rf.Error("readPersist decode error: %+v\n", err)
-	}
-	if err := d.Decode(&logEntries); err != nil {
-		rf.Error("readPersist decode error: %+v\n", err)
+	if d.Decode(&currentTerm) != nil || d.Decode(&votedFor) != nil || d.Decode(&logEntries) != nil {
+		panic("readPersist decode error !")
 	}
 
-	rf.mu.Lock()
 	rf.currentTerm = currentTerm
 	rf.votedFor = votedFor
-	if logEntries != nil {
-		rf.logEntries = logEntries
-	}
-	rf.mu.Unlock()
+	rf.logEntries = logEntries
 }
 
 // RequestVoteArgs
@@ -295,7 +275,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		if rf.logEntries[rfLogIndex].Term != args.LogEntries[i].Term {
 			rf.logEntries = rf.logEntries[:rfLogIndex]
-			rf.persist()
 			break
 		}
 	}
