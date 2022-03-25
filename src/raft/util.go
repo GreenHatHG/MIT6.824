@@ -50,6 +50,12 @@ func (rf *Raft) getLastLogIndex() int {
 	return len(rf.logEntries) - 1
 }
 
+func (rf *Raft) resetTerm(term int) {
+	rf.currentTerm = term
+	rf.votedFor = -1
+	rf.persist()
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -74,4 +80,5 @@ func (rf *Raft) leaderMaybeCommit() {
 		}
 		rf.commitIndex = i
 	}
+	go rf.doApplyLog()
 }

@@ -20,6 +20,7 @@ package raft
 import (
 	"bytes"
 	"sync"
+	"time"
 )
 import "sync/atomic"
 import "../labrpc"
@@ -83,12 +84,11 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 	//2A
-	intervalTimer    int
-	electionInterval int
-	tick             func()
-	serverState      ServerState
-	votedFor         int
-	currentTerm      int
+	electionTimeout        time.Duration
+	resetElectionTimerTime time.Time
+	serverState            ServerState
+	votedFor               int
+	currentTerm            int
 	//2B
 	logEntries []LogEntry
 	//index of the highest log entry known to be  committed (initialized to 0, increases monotonically)
@@ -216,8 +216,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	if rf.currentTerm < args.Term {
-		rf.becomeFollower(false, true, args.Term)
-		reply.Term = rf.currentTerm
+		rf.serverState = Follower
+		rf.resetTerm(args.Term)
 	}
 
 	//确保日志至少和接收者一样新
@@ -226,7 +226,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && logUpToDate {
 		rf.votedFor = args.CandidateId
-		rf.resetTimer(false)
+		rf.resetElectionTimerTime = time.Now()
 		reply.VoteGranted = true
 		rf.persist()
 	}
@@ -241,11 +241,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if rf.currentTerm > args.Term {
 		return
 	}
-	if rf.currentTerm < args.Term {
-		rf.becomeFollower(false, true, args.Term)
-		reply.Term = rf.currentTerm
+
+	rf.resetElectionTimerTime = time.Now()
+	if rf.serverState == Candidate && args.Term >= rf.currentTerm {
+		rf.serverState = Follower
+		rf.resetTerm(args.Term)
+	} else if rf.serverState == Follower && args.Term > rf.currentTerm {
+		rf.resetTerm(args.Term)
+	} else if rf.serverState == Leader && args.Term > rf.currentTerm {
+		rf.serverState = Follower
+		rf.resetTerm(args.Term)
 	}
-	rf.becomeFollower(true, false, -1)
 
 	rfLastLogIndex := rf.getLastLogIndex()
 	if args.PrevLogIndex > rfLastLogIndex {
@@ -286,6 +292,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = minInt(args.LeaderCommit, len(rf.logEntries)-1)
+		go rf.doApplyLog()
 	}
 	reply.Success = true
 }
@@ -414,9 +421,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 
-	rf.becomeFollower(true, false, -1)
-	go rf.ticker()
-	go rf.checkCommitLoop()
+	rf.serverState = Follower
+	rf.electionTimeout = rf.getRandomElectionTimeout()
+	go rf.electionTicker()
+	go rf.heartBeatTicker()
 
 	return rf
 }

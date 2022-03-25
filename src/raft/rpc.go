@@ -34,7 +34,8 @@ func (rf *Raft) requestVoteRPC() {
 			}
 
 			if reply.Term > rf.currentTerm {
-				rf.becomeFollower(false, true, reply.Term)
+				rf.serverState = Follower
+				rf.resetTerm(reply.Term)
 				return
 			}
 			if reply.VoteGranted {
@@ -42,7 +43,13 @@ func (rf *Raft) requestVoteRPC() {
 			}
 			if rf.isMajority(success) {
 				rf.Info("-----------------------选举成功\n")
-				rf.becomeLeader()
+				rf.serverState = Leader
+				for i := range rf.peers {
+					rf.nextIndex[i] = len(rf.logEntries)
+					rf.matchIndex[i] = 0
+				}
+				rf.matchIndex[rf.me] = rf.getLastLogIndex()
+				rf.appendEntriesRPC(true)
 			}
 		}()
 	}
@@ -86,8 +93,8 @@ func (rf *Raft) appendEntriesRPC(empty bool) {
 			}
 
 			if reply.Term > rf.currentTerm {
-				rf.becomeFollower(false, true, reply.Term)
-				rf.Info("心跳结束后转变为follower，存在更大Term，rf.currentTerm更新为[%d]\n", reply.Term)
+				rf.serverState = Follower
+				rf.resetTerm(reply.Term)
 				return
 			}
 
