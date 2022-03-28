@@ -1,9 +1,11 @@
 package kvraft
 
-import "../labrpc"
+import (
+	"../labrpc"
+	"time"
+)
 import "crypto/rand"
 import "math/big"
-
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
@@ -39,7 +41,22 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
-	return ""
+	args := GetArgs{Key: key}
+	for {
+		for i := range ck.servers {
+			reply := GetReply{}
+			DPrintf("Clerk向[%d]发送Get请求", i)
+			ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+			DPrintf("Clerk向[%d]请求Get返回，请求:%+v, 回复:%+v", i, args, reply)
+			if ok && reply.Err == OK {
+				return reply.Value
+			}
+			if ok && reply.Err == ErrNoKey {
+				return ""
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
 }
 
 //
@@ -54,6 +71,19 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	args := PutAppendArgs{Key: key, Value: value, Op: op}
+	for {
+		for i := range ck.servers {
+			reply := GetReply{}
+			DPrintf("Clerk向[%d]发送%s请求", i, op)
+			ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+			DPrintf("Clerk向[%d]请求%s返回，请求:%+v, 回复:%+v", i, op, args, reply)
+			if ok && reply.Err == OK {
+				return
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {

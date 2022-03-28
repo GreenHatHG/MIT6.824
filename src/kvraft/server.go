@@ -3,26 +3,31 @@ package kvraft
 import (
 	"../labgob"
 	"../labrpc"
-	"log"
 	"../raft"
+	"log"
 	"sync"
 	"sync/atomic"
 )
 
-const Debug = 0
+const Debug = 1
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
+func init() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+}
+
+func DPrintf(format string, a ...interface{}) {
 	if Debug > 0 {
 		log.Printf(format, a...)
 	}
-	return
 }
-
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	KVOpType string
+	Key      string
+	Value    string
 }
 
 type KVServer struct {
@@ -35,15 +40,54 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	Data map[string]string
 }
 
-
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	reply.Err = OK
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	if value, ok := kv.Data[args.Key]; !ok {
+		reply.Err = ErrNoKey
+	} else {
+		reply.Value = value
+	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	reply.Err = OK
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	op := Op{
+		KVOpType: args.Op,
+		Key:      args.Key,
+		Value:    args.Value,
+	}
+	oldValue, ok := kv.Data[args.Key]
+	if args.Op == "Put" {
+		kv.Data[args.Key] = args.Value
+		kv.rf.Start(op)
+	} else if args.Op == "Append" {
+		if !ok {
+			kv.Data[args.Key] = args.Value
+			kv.rf.Start(op)
+			return
+		}
+		newValue := oldValue + args.Value
+		kv.Data[args.Key] = newValue
+		op.Value = newValue
+		kv.rf.Start(op)
+	}
 }
 
 //
@@ -96,6 +140,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
-
+	kv.Data = make(map[string]string)
 	return kv
 }
