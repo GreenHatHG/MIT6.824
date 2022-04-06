@@ -5,19 +5,27 @@ import (
 	"../labrpc"
 	"../raft"
 	"log"
+	"os"
 	"sync"
 	"sync/atomic"
 )
 
 const Debug = 1
 
+var (
+	Info *log.Logger
+	Warn *log.Logger
+)
+
 func init() {
+	Info = log.New(os.Stdout, "Info:", log.LstdFlags|log.Lmicroseconds)
+	Warn = log.New(os.Stdout, "Warn:", log.LstdFlags|log.Lmicroseconds)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 }
 
 func DPrintf(format string, a ...interface{}) {
 	if Debug > 0 {
-		log.Printf(format, a...)
+		Info.Printf(format, a...)
 	}
 }
 
@@ -40,7 +48,8 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	Data map[string]string
+	Data         map[string]string
+	HasCommitted map[string]struct{}
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -61,10 +70,23 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
-	defer kv.mu.Unlock()
+	defer func() {
+		if reply.Err == OK {
+			kv.HasCommitted[args.ArgsId] = struct{}{}
+		}
+		kv.mu.Unlock()
+	}()
 	reply.Err = OK
-	if _, isLeader := kv.rf.GetState(); !isLeader {
+
+	term, isLeader := kv.rf.GetState()
+	if !isLeader {
 		reply.Err = ErrWrongLeader
+		return
+	}
+
+	DPrintf("[KVServer %d] isLeader:%v, term:%d", kv.me, isLeader, term)
+	if _, ok := kv.HasCommitted[args.ArgsId]; ok {
+		DPrintf("[KVServer %d]已经处理过: %+v ", kv.me, args)
 		return
 	}
 
@@ -73,11 +95,11 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		Key:      args.Key,
 		Value:    args.Value,
 	}
-	oldValue, ok := kv.Data[args.Key]
 	if args.Op == "Put" {
 		kv.Data[args.Key] = args.Value
 		kv.rf.Start(op)
 	} else if args.Op == "Append" {
+		oldValue, ok := kv.Data[args.Key]
 		if !ok {
 			kv.Data[args.Key] = args.Value
 			kv.rf.Start(op)
@@ -101,6 +123,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // to suppress debug output from a Kill()ed instance.
 //
 func (kv *KVServer) Kill() {
+	Warn.Printf("-----------------[KVServer %d] kill", kv.me)
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 	// Your code here, if desired.
@@ -141,5 +164,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	// You may need initialization code here.
 	kv.Data = make(map[string]string)
+	kv.HasCommitted = make(map[string]struct{})
 	return kv
 }
