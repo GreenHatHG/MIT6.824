@@ -34,7 +34,7 @@ func (ck *Clerk) replicateServiceClient(callOne func(int, chan interface{})) int
 func (ck *Clerk) getRPC(args *GetArgs) *GetReply {
 	mainFunc := func(i int, done chan interface{}) {
 		reply := &GetReply{}
-		DPrintf("Clerk Get: 向[%d]发送请求", i)
+		DPrintf("Clerk Get: 向[%d]发送请求:%+v", i, args)
 		ok := ck.servers[i].Call("KVServer.Get", args, reply)
 		DPrintf("Clerk Get:[%d]返回，ok: %v, 请求:%+v, 回复:%+v", i, ok, args, reply)
 		if ok && reply.Err != ErrWrongLeader {
@@ -50,7 +50,7 @@ func (ck *Clerk) getRPC(args *GetArgs) *GetReply {
 func (ck *Clerk) putAppendRPC(args *PutAppendArgs, op string) *PutAppendReply {
 	mainFunc := func(i int, done chan interface{}) {
 		reply := &PutAppendReply{}
-		DPrintf("Clerk %s: 向[%d]发送请求", op, i)
+		DPrintf("Clerk %s: 向[%d]发送请求:%+v", op, i, args)
 		ok := ck.servers[i].Call("KVServer.PutAppend", args, reply)
 		DPrintf("Clerk %s: [%d]返回，ok: %v, 请求:%+v, 回复:%+v", op, i, ok, args, reply)
 		if ok && reply.Err == OK {

@@ -4,6 +4,7 @@ import (
 	"../labgob"
 	"../labrpc"
 	"../raft"
+	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -48,19 +49,24 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	Data         map[string]string
-	HasCommitted map[string]struct{}
+	Data                 map[string]string
+	HasCommitted         map[string]struct{}
+	LeaderCommitCallback chan Op
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	reply.Err = OK
-	if _, isLeader := kv.rf.GetState(); !isLeader {
+
+	term, isLeader := kv.rf.GetState()
+	DPrintf("---------------debug: [KVServer %d] isLeader:%v, term:%d", kv.me, isLeader, term)
+	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
 	}
 
+	DPrintf("[KVServer %d] isLeader:%v, term:%d", kv.me, isLeader, term)
 	if value, ok := kv.Data[args.Key]; !ok {
 		reply.Err = ErrNoKey
 	} else {
@@ -95,20 +101,24 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		Key:      args.Key,
 		Value:    args.Value,
 	}
-	if args.Op == "Put" {
-		kv.Data[args.Key] = args.Value
-		kv.rf.Start(op)
-	} else if args.Op == "Append" {
-		oldValue, ok := kv.Data[args.Key]
+	kv.rf.Start(op)
+	fmt.Println(kv.me, "kv.doPutAppend(<-kv.LeaderCommitCallback)")
+	kv.doPutAppend(<-kv.LeaderCommitCallback)
+}
+
+func (kv *KVServer) doPutAppend(op Op) {
+	DPrintf("[KVServer %d] 执行%+v", kv.me, op)
+	if op.KVOpType == "Put" {
+		kv.Data[op.Key] = op.Value
+	} else if op.KVOpType == "Append" {
+		oldValue, ok := kv.Data[op.Key]
 		if !ok {
-			kv.Data[args.Key] = args.Value
-			kv.rf.Start(op)
+			kv.Data[op.Key] = op.Value
 			return
 		}
-		newValue := oldValue + args.Value
-		kv.Data[args.Key] = newValue
+		newValue := oldValue + op.Value
+		kv.Data[op.Key] = newValue
 		op.Value = newValue
-		kv.rf.Start(op)
 	}
 }
 
@@ -165,5 +175,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	kv.Data = make(map[string]string)
 	kv.HasCommitted = make(map[string]struct{})
+	kv.LeaderCommitCallback = make(chan Op)
+	go kv.applyChLoop()
 	return kv
 }
