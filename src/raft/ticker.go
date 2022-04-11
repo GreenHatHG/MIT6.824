@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -44,19 +43,17 @@ func (rf *Raft) doApplyLog() {
 		rf.mu.Unlock()
 		return
 	}
-	commitEntries := make([]ApplyMsg, 0, rf.commitIndex-rf.lastApplied)
+	commitLen := rf.commitIndex - rf.lastApplied
+	commitEntries := make([]ApplyMsg, 0, commitLen)
 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 		msg := ApplyMsg{true, rf.logEntries[i].Command, i}
 		commitEntries = append(commitEntries, msg)
 	}
+	rf.lastApplied = commitEntries[commitLen-1].CommandIndex
 	rf.mu.Unlock()
 
 	for _, msg := range commitEntries {
 		rf.applyMsg <- msg
-		rf.mu.Lock()
-		fmt.Println(StateString(rf.serverState), "rf.applyMsg <- msg")
-		rf.lastApplied = msg.CommandIndex
-		rf.mu.Unlock()
 	}
 	rf.Info("apply msg: %+v\n", commitEntries)
 }

@@ -1,20 +1,17 @@
 package kvraft
 
-import "fmt"
-
 func (kv *KVServer) applyChLoop() {
 	for ch := range kv.applyCh {
 		op := ch.Command.(Op)
-		kv.mu.Lock()
-		fmt.Println(kv.me)
-		a, b := kv.rf.GetState()
-		fmt.Println(kv.me, a, b)
-		if _, isLeader := kv.rf.GetState(); !isLeader {
+		DPrintf("KVServer [%d]接收到applyCh:%+v", kv.me, op)
+		_, isLeader := kv.rf.GetState()
+
+		if !isLeader {
+			kv.mu.Lock()
 			kv.doPutAppend(op)
+			kv.mu.Unlock()
 		} else {
-			fmt.Println(kv.me, "kv.LeaderCommitCallback <- op")
 			kv.LeaderCommitCallback <- op
 		}
-		kv.mu.Unlock()
 	}
 }

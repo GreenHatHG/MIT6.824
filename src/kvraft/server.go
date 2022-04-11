@@ -34,9 +34,10 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	KVOpType string
-	Key      string
-	Value    string
+	KVOpType  string
+	Key       string
+	Value     string
+	RequestId string
 }
 
 type KVServer struct {
@@ -60,7 +61,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	reply.Err = OK
 
 	term, isLeader := kv.rf.GetState()
-	DPrintf("---------------debug: [KVServer %d] isLeader:%v, term:%d", kv.me, isLeader, term)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -75,13 +75,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	kv.mu.Lock()
-	defer func() {
-		if reply.Err == OK {
-			kv.HasCommitted[args.ArgsId] = struct{}{}
-		}
-		kv.mu.Unlock()
-	}()
 	reply.Err = OK
 
 	term, isLeader := kv.rf.GetState()
@@ -91,19 +84,28 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 
 	DPrintf("[KVServer %d] isLeader:%v, term:%d", kv.me, isLeader, term)
-	if _, ok := kv.HasCommitted[args.ArgsId]; ok {
+	DPrintf("[KVServer %d] PutAppend: %+v", kv.me, args)
+	kv.mu.Lock()
+	_, ok := kv.HasCommitted[args.RequestId]
+	kv.mu.Unlock()
+	if ok {
 		DPrintf("[KVServer %d]已经处理过: %+v ", kv.me, args)
 		return
 	}
 
 	op := Op{
-		KVOpType: args.Op,
-		Key:      args.Key,
-		Value:    args.Value,
+		KVOpType:  args.Op,
+		Key:       args.Key,
+		Value:     args.Value,
+		RequestId: args.RequestId,
 	}
 	kv.rf.Start(op)
-	fmt.Println(kv.me, "kv.doPutAppend(<-kv.LeaderCommitCallback)")
-	kv.doPutAppend(<-kv.LeaderCommitCallback)
+
+	callBackOp := <-kv.LeaderCommitCallback
+	fmt.Println(kv.me, "kv.doPutAppend(<-kv.LeaderCommitCallback)", callBackOp)
+	kv.mu.Lock()
+	kv.doPutAppend(callBackOp)
+	kv.mu.Unlock()
 }
 
 func (kv *KVServer) doPutAppend(op Op) {
@@ -120,6 +122,7 @@ func (kv *KVServer) doPutAppend(op Op) {
 		kv.Data[op.Key] = newValue
 		op.Value = newValue
 	}
+	kv.HasCommitted[op.RequestId] = struct{}{}
 }
 
 //

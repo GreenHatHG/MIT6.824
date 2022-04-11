@@ -44,6 +44,7 @@ func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
 	args := &GetArgs{Key: key}
+	DPrintf("Clerk收到Get: %+v", args)
 	r := ck.getRPC(args)
 	if r.Err == OK {
 		return r.Value
@@ -63,7 +64,8 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
-	args := &PutAppendArgs{Key: key, Value: value, Op: op, ArgsId: NewUUID()}
+	args := &PutAppendArgs{Key: key, Value: value, Op: op, RequestId: NewUUID()}
+	DPrintf("Clerk收到PutAppend: %+v", args)
 	ck.putAppendRPC(args, op)
 }
 

@@ -379,7 +379,6 @@ func (rf *Raft) Kill() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	// Your code here, if desired.
-	close(rf.applyMsg)
 	if Debug {
 		rf.Warn("--------------------------------------kill %d", rf.me)
 	}
