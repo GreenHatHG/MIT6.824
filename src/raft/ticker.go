@@ -46,7 +46,7 @@ func (rf *Raft) doApplyLog() {
 	commitLen := rf.commitIndex - rf.lastApplied
 	commitEntries := make([]ApplyMsg, 0, commitLen)
 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-		msg := ApplyMsg{true, rf.logEntries[i].Command, i}
+		msg := ApplyMsg{true, rf.logEntries[i].Command, i, int64(rf.currentTerm)}
 		commitEntries = append(commitEntries, msg)
 	}
 	rf.lastApplied = commitEntries[commitLen-1].CommandIndex

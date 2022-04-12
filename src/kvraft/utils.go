@@ -9,7 +9,7 @@ func (ck *Clerk) replicateServiceClient(callOne func(int, chan interface{})) int
 
 	numServer := len(ck.servers)
 	done := make(chan interface{})
-	const timeout = 1 * time.Second
+	const timeout = 500 * time.Millisecond
 	t := time.NewTimer(timeout)
 
 	for {
@@ -34,9 +34,9 @@ func (ck *Clerk) replicateServiceClient(callOne func(int, chan interface{})) int
 func (ck *Clerk) getRPC(args *GetArgs) *GetReply {
 	mainFunc := func(i int, done chan interface{}) {
 		reply := &GetReply{}
-		DPrintf("Clerk Get: 向发送请求:%+v", args)
+		DPrintf("Clerk Get请求[%d]:%+v", i, args)
 		ok := ck.servers[i].Call("KVServer.Get", args, reply)
-		DPrintf("Clerk Get:返回，ok: %v, 请求:%+v, 回复:%+v", ok, args, reply)
+		DPrintf("Clerk Get返回[%d]，ok: %v, 请求:%+v, 回复:%+v", i, ok, args, reply)
 		if ok && reply.Err != ErrWrongLeader {
 			select {
 			case done <- reply:
@@ -50,9 +50,9 @@ func (ck *Clerk) getRPC(args *GetArgs) *GetReply {
 func (ck *Clerk) putAppendRPC(args *PutAppendArgs, op string) *PutAppendReply {
 	mainFunc := func(i int, done chan interface{}) {
 		reply := &PutAppendReply{}
-		DPrintf("Clerk %s: 发送请求:%+v", op, args)
+		DPrintf("Clerk %s请求[%d]:%+v", op, i, args)
 		ok := ck.servers[i].Call("KVServer.PutAppend", args, reply)
-		DPrintf("Clerk %s: 返回，ok: %v, 请求:%+v, 回复:%+v", op, ok, args, reply)
+		DPrintf("Clerk %s返回[%d]，ok: %v, 请求:%+v, 回复:%+v", op, i, ok, args, reply)
 		if ok && reply.Err == OK {
 			select {
 			case done <- reply:

@@ -43,7 +43,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
-	args := &GetArgs{Key: key}
+	args := &GetArgs{Key: key, RequestId: NewUUID()}
 	DPrintf("Clerk收到Get: %+v", args)
 	r := ck.getRPC(args)
 	if r.Err == OK {

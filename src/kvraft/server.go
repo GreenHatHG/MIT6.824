@@ -50,23 +50,38 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	Data                 map[string]string
-	HasCommitted         map[string]struct{}
-	LeaderCommitCallback chan Op
+	Data         map[string]string
+	HasCommitted map[string]struct{}
+	CallbackSub  map[string]chan Op
+	LeaderTerm   int64
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
 	reply.Err = OK
 
 	term, isLeader := kv.rf.GetState()
-	if !isLeader {
+	if !isLeader || atomic.LoadInt64(&kv.LeaderTerm) > int64(term) {
 		reply.Err = ErrWrongLeader
 		return
 	}
 
-	DPrintf("[KVServer %d] isLeader:%v, term:%d", kv.me, isLeader, term)
+	DPrintf("[KVServer %d] isLeader:%v, term:%d, kv.LeaderTerm: %d", kv.me, isLeader, term, kv.LeaderTerm)
+	DPrintf("[KVServer %d] Get: %+v", kv.me, args)
+
+	op := Op{
+		KVOpType:  "Get",
+		Key:       "",
+		Value:     "",
+		RequestId: args.RequestId,
+	}
+
+	callBackCh := make(chan Op)
+	kv.mu.Lock()
+	kv.CallbackSub[op.RequestId] = callBackCh
+	kv.mu.Unlock()
+	kv.rf.Start(op)
+
+	<-callBackCh
 	if value, ok := kv.Data[args.Key]; !ok {
 		reply.Err = ErrNoKey
 	} else {
@@ -78,12 +93,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	reply.Err = OK
 
 	term, isLeader := kv.rf.GetState()
-	if !isLeader {
+	if !isLeader || atomic.LoadInt64(&kv.LeaderTerm) > int64(term) {
 		reply.Err = ErrWrongLeader
 		return
 	}
 
-	DPrintf("[KVServer %d] isLeader:%v, term:%d", kv.me, isLeader, term)
+	DPrintf("[KVServer %d] isLeader:%v, term:%d, kv.LeaderTerm: %d", kv.me, isLeader, term, kv.LeaderTerm)
 	DPrintf("[KVServer %d] PutAppend: %+v", kv.me, args)
 	kv.mu.Lock()
 	_, ok := kv.HasCommitted[args.RequestId]
@@ -99,13 +114,16 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		Value:     args.Value,
 		RequestId: args.RequestId,
 	}
+
+	//不能直接接收applyCh，可能刚好follower转leader，没有对应的channel接收
+	callBackCh := make(chan Op)
+	kv.mu.Lock()
+	kv.CallbackSub[op.RequestId] = callBackCh
+	kv.mu.Unlock()
 	kv.rf.Start(op)
 
-	callBackOp := <-kv.LeaderCommitCallback
+	callBackOp := <-callBackCh
 	fmt.Println(kv.me, "kv.doPutAppend(<-kv.LeaderCommitCallback)", callBackOp)
-	kv.mu.Lock()
-	kv.doPutAppend(callBackOp)
-	kv.mu.Unlock()
 }
 
 func (kv *KVServer) doPutAppend(op Op) {
@@ -178,7 +196,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	kv.Data = make(map[string]string)
 	kv.HasCommitted = make(map[string]struct{})
-	kv.LeaderCommitCallback = make(chan Op)
+	kv.CallbackSub = make(map[string]chan Op)
 	go kv.applyChLoop()
 	return kv
 }
