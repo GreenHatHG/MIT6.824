@@ -127,6 +127,10 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 }
 
 func (kv *KVServer) doPutAppend(op Op) {
+	if _, ok := kv.HasCommitted[op.RequestId]; ok {
+		DPrintf("[KVServer %d]已经处理过: %+v ", kv.me, op)
+		return
+	}
 	DPrintf("[KVServer %d] 执行%+v", kv.me, op)
 	if op.KVOpType == "Put" {
 		kv.Data[op.Key] = op.Value
