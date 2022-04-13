@@ -4,14 +4,13 @@ import (
 	"../labgob"
 	"../labrpc"
 	"../raft"
-	"fmt"
 	"log"
 	"os"
 	"sync"
 	"sync/atomic"
 )
 
-const Debug = 1
+const Debug = 0
 
 var (
 	Info *log.Logger
@@ -82,11 +81,13 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.rf.Start(op)
 
 	<-callBackCh
+	kv.mu.Lock()
 	if value, ok := kv.Data[args.Key]; !ok {
 		reply.Err = ErrNoKey
 	} else {
 		reply.Value = value
 	}
+	kv.mu.Unlock()
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
@@ -123,7 +124,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.rf.Start(op)
 
 	callBackOp := <-callBackCh
-	fmt.Println(kv.me, "kv.doPutAppend(<-kv.LeaderCommitCallback)", callBackOp)
+	DPrintf("%d kv.doPutAppend(<-kv.LeaderCommitCallback) %+v", kv.me, callBackOp)
 }
 
 func (kv *KVServer) doPutAppend(op Op) {

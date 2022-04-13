@@ -80,5 +80,5 @@ func (rf *Raft) leaderMaybeCommit() {
 		}
 		rf.commitIndex = i
 	}
-	go rf.doApplyLog()
+	rf.doApplyLog()
 }

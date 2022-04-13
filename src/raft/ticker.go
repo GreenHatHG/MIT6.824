@@ -38,22 +38,10 @@ func (rf *Raft) heartBeatTicker() {
 }
 
 func (rf *Raft) doApplyLog() {
-	rf.mu.Lock()
-	if rf.lastApplied == rf.commitIndex {
-		rf.mu.Unlock()
-		return
-	}
-	commitLen := rf.commitIndex - rf.lastApplied
-	commitEntries := make([]ApplyMsg, 0, commitLen)
 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 		msg := ApplyMsg{true, rf.logEntries[i].Command, i, int64(rf.currentTerm)}
-		commitEntries = append(commitEntries, msg)
-	}
-	rf.lastApplied = commitEntries[commitLen-1].CommandIndex
-	rf.mu.Unlock()
-
-	for _, msg := range commitEntries {
 		rf.applyMsg <- msg
+		rf.lastApplied = i
+		rf.Info("apply msg: %+v\n", msg)
 	}
-	rf.Info("apply msg: %+v\n", commitEntries)
 }

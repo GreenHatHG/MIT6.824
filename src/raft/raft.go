@@ -293,7 +293,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = minInt(args.LeaderCommit, len(rf.logEntries)-1)
-		go rf.doApplyLog()
+		rf.doApplyLog()
 	}
 	reply.Success = true
 }
