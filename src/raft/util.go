@@ -64,6 +64,7 @@ func minInt(a, b int) int {
 }
 
 func (rf *Raft) leaderMaybeCommit() {
+	origin := rf.commitIndex
 	for i := rf.commitIndex + 1; i <= rf.getLastLogIndex(); i++ {
 		if rf.logEntries[i].Term != rf.currentTerm {
 			continue
@@ -80,5 +81,7 @@ func (rf *Raft) leaderMaybeCommit() {
 		}
 		rf.commitIndex = i
 	}
-	rf.doApplyLog()
+	if rf.commitIndex != origin {
+		rf.applyCond.Broadcast()
+	}
 }

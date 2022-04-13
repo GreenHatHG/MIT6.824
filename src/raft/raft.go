@@ -84,22 +84,23 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	//2A
+	// 2A
 	electionTimeout        time.Duration
 	resetElectionTimerTime time.Time
 	serverState            ServerState
 	votedFor               int
 	currentTerm            int
-	//2B
+	// 2B
 	logEntries []LogEntry
-	//index of the highest log entry known to be  committed (initialized to 0, increases monotonically)
+	// index of the highest log entry known to be  committed (initialized to 0, increases monotonically)
 	commitIndex int
-	//对于每个server，发送到该server的下一个log entry的index(initialized to leader last log index + 1)
+	// 对于每个server，发送到该server的下一个log entry的index(initialized to leader last log index + 1)
 	nextIndex []int
-	//对于每个server，已知要在server上复制的最新log entry的index
+	// 对于每个server，已知要在server上复制的最新log entry的index
 	matchIndex  []int
 	lastApplied int
 	applyMsg    chan ApplyMsg
+	applyCond   *sync.Cond
 }
 
 // GetState return currentTerm and whether this server
@@ -158,9 +159,9 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	//candidate’s term
+	// candidate’s term
 	Term int
-	//candidate requesting vote
+	// candidate requesting vote
 	CandidateId  int
 	LastLogIndex int
 	LastLogTerm  int
@@ -172,31 +173,31 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-	//currentTerm, for candidate to update itself
+	// currentTerm, for candidate to update itself
 	Term int
-	//true means candidate received vote
+	// true means candidate received vote
 	VoteGranted bool
 }
 
 type AppendEntriesArgs struct {
-	//leader’s term
+	// leader’s term
 	Term int
-	//2B
-	//index of log entry immediately preceding new ones
+	// 2B
+	// index of log entry immediately preceding new ones
 	PrevLogIndex int
-	//term of prevLogIndex entry
+	// term of prevLogIndex entry
 	PrevLogTerm int
-	//log entries to store (empty for heartbeat;
-	//may send more than one for efficiency)
+	// log entries to store (empty for heartbeat;
+	// may send more than one for efficiency)
 	LogEntries []LogEntry
-	//leader’s commitIndex
+	// leader’s commitIndex
 	LeaderCommit int
 }
 
 type AppendEntriesReply struct {
-	//currentTerm, for leader to update itself
+	// currentTerm, for leader to update itself
 	Term int
-	//2B
+	// 2B
 	Success bool
 
 	ConflictIndex int
@@ -221,7 +222,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.resetTerm(args.Term)
 	}
 
-	//确保日志至少和接收者一样新
+	// 确保日志至少和接收者一样新
 	lastTerm := rf.logEntries[len(rf.logEntries)-1].Term
 	logUpToDate := args.LastLogTerm > lastTerm || (args.LastLogTerm == lastTerm && args.LastLogIndex >= len(rf.logEntries)-1)
 
@@ -293,7 +294,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = minInt(args.LeaderCommit, len(rf.logEntries)-1)
-		rf.doApplyLog()
+		rf.applyCond.Broadcast()
 	}
 	reply.Success = true
 }
@@ -411,7 +412,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// 如果没有持久化数据，readPersist不会执行任何逻辑，那么votedFor应该设置为-1
 	rf.votedFor = -1
 	rf.logEntries = make([]LogEntry, 0)
-	//index从1开始
+	// index从1开始
 	rf.logEntries = append(rf.logEntries, LogEntry{})
 
 	// initialize from state persisted before a crash
@@ -424,8 +425,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.serverState = Follower
 	rf.electionTimeout = rf.getRandomElectionTimeout()
+	rf.applyCond = sync.NewCond(&sync.Mutex{})
 	go rf.electionTicker()
 	go rf.heartBeatTicker()
+	go rf.doApplyLog()
 
 	return rf
 }
