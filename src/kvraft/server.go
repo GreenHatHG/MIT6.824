@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 )
 
-const Debug = 0
+const Debug = 1
 
 var (
 	Info *log.Logger
@@ -141,9 +141,7 @@ func (kv *KVServer) doPutAppend(op Op) {
 			kv.Data[op.Key] = op.Value
 			return
 		}
-		newValue := oldValue + op.Value
-		kv.Data[op.Key] = newValue
-		op.Value = newValue
+		kv.Data[op.Key] = oldValue + op.Value
 	}
 	kv.HasCommitted[op.RequestId] = struct{}{}
 }

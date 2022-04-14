@@ -46,21 +46,16 @@ func (rf *Raft) doApplyLog() {
 		}
 
 		rf.mu.Lock()
-		commitLen := rf.commitIndex - rf.lastApplied
-		commitEntries := make([]ApplyMsg, 0, commitLen)
-		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-			msg := ApplyMsg{true, rf.logEntries[i].Command, i, int64(rf.currentTerm)}
-			commitEntries = append(commitEntries, msg)
-		}
-		rf.Info("apply msg: %+v\n", commitEntries)
+		i := rf.lastApplied + 1
+		msg := ApplyMsg{true, rf.logEntries[i].Command, i, int64(rf.currentTerm)}
+		rf.Info("apply msg: %+v\n", msg)
 		rf.mu.Unlock()
 
-		for _, msg := range commitEntries {
-			rf.applyMsg <- msg
-			rf.mu.Lock()
-			rf.lastApplied = msg.CommandIndex
-			rf.mu.Unlock()
-		}
+		rf.applyMsg <- msg
+
+		rf.mu.Lock()
+		rf.lastApplied = i
+		rf.mu.Unlock()
 	}
 }
 
