@@ -48,14 +48,11 @@ func (rf *Raft) doApplyLog() {
 		rf.mu.Lock()
 		i := rf.lastApplied + 1
 		msg := ApplyMsg{true, rf.logEntries[i].Command, i, int64(rf.currentTerm)}
+		rf.lastApplied = i
 		rf.Info("apply msg: %+v\n", msg)
 		rf.mu.Unlock()
 
 		rf.applyMsg <- msg
-
-		rf.mu.Lock()
-		rf.lastApplied = i
-		rf.mu.Unlock()
 	}
 }
 

@@ -132,6 +132,9 @@ func (kv *KVServer) doPutAppend(op Op) {
 		DPrintf("[KVServer %d]已经处理过: %+v ", kv.me, op)
 		return
 	}
+	defer func() {
+		kv.HasCommitted[op.RequestId] = struct{}{}
+	}()
 	DPrintf("[KVServer %d] 执行%+v", kv.me, op)
 	if op.KVOpType == "Put" {
 		kv.Data[op.Key] = op.Value
@@ -143,7 +146,6 @@ func (kv *KVServer) doPutAppend(op Op) {
 		}
 		kv.Data[op.Key] = oldValue + op.Value
 	}
-	kv.HasCommitted[op.RequestId] = struct{}{}
 }
 
 //
